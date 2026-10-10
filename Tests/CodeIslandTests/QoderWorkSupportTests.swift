@@ -44,7 +44,4 @@ final class QoderWorkSupportTests: XCTestCase {
         XCTAssertFalse(SessionSnapshot.ideHostSources.contains("qoderwork"))
     }
 
-    func testQoderWorkFoldsOntoQoderBuddySlot() {
-        XCTAssertEqual(MascotID(sourceName: "qoderwork"), .qoder)
-    }
 }

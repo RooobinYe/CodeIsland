@@ -116,40 +116,6 @@ for bundle in "$BUILD_DIR"/*/release/*.bundle; do
     fi
 done
 
-# ---------------------------------------------------------------------------
-# Embed Sparkle.framework. The default release build keeps Sparkle universal;
-# arm64 builds thin it while copying so the unsigned CI artifact stays ARM-only.
-# The xcframework slice already contains signed Autoupdate / Updater.app / XPC
-# services, so we keep those signatures intact and sign only the outer bundle
-# below — never pass --deep/--force through the framework.
-# ---------------------------------------------------------------------------
-mkdir -p "$CONTENTS_DIR/Frameworks"
-SPARKLE_SRC="$BUILD_DIR/artifacts/sparkle/Sparkle/Sparkle.xcframework/macos-arm64_x86_64/Sparkle.framework"
-if [ ! -d "$SPARKLE_SRC" ]; then
-    echo "ERROR: $SPARKLE_SRC not found. Run 'swift build -c release' first to let SwiftPM resolve Sparkle." >&2
-    exit 1
-fi
-rm -rf "$CONTENTS_DIR/Frameworks/Sparkle.framework"
-case "$BUILD_ARCH" in
-    universal)
-        cp -R "$SPARKLE_SRC" "$CONTENTS_DIR/Frameworks/"
-        ;;
-    arm64)
-        ditto --arch arm64 "$SPARKLE_SRC" "$CONTENTS_DIR/Frameworks/Sparkle.framework"
-        ;;
-esac
-echo "==> Embedded Sparkle.framework from $SPARKLE_SRC"
-
-# SwiftPM builds binaries with @loader_path as the only non-system rpath, which
-# resolves Sparkle when the .dylib sits next to the executable (as it does
-# inside .build/). Inside a real .app the binary lives in Contents/MacOS while
-# the framework lives in Contents/Frameworks, so we add @executable_path/..
-# /Frameworks explicitly. Changing the load commands invalidates any prior
-# signature — we re-sign below.
-install_name_tool -add_rpath "@executable_path/../Frameworks" \
-    "$CONTENTS_DIR/MacOS/CodeIsland"
-echo "==> Added @executable_path/../Frameworks rpath to CodeIsland binary"
-
 echo "==> App bundle assembled at $APP_DIR"
 
 # ---------------------------------------------------------------------------
@@ -167,19 +133,6 @@ find "$APP_DIR" -exec xattr -c {} + 2>/dev/null || true
 
 adhoc_sign_app_for_local_permissions() {
     echo "==> Ad-hoc signing app with local entitlements"
-    SPARKLE_FW="$CONTENTS_DIR/Frameworks/Sparkle.framework"
-    SPARKLE_B="$SPARKLE_FW/Versions/B"
-
-    for xpc in "$SPARKLE_B"/XPCServices/*.xpc; do
-        [ -e "$xpc" ] || continue
-        codesign --force --options runtime --sign - "$xpc"
-    done
-    [ -e "$SPARKLE_B/Autoupdate" ] && \
-        codesign --force --options runtime --sign - "$SPARKLE_B/Autoupdate"
-    [ -d "$SPARKLE_B/Updater.app" ] && \
-        codesign --force --options runtime --sign - "$SPARKLE_B/Updater.app"
-    codesign --force --options runtime --sign - "$SPARKLE_FW"
-
     for helper in "$CONTENTS_DIR"/Helpers/*; do
         [ -f "$helper" ] || continue
         codesign --force --options runtime --sign - "$helper"
@@ -195,25 +148,7 @@ if [ "${SKIP_SIGN:-0}" = "1" ]; then
     echo "==> SKIP_SIGN=1 — skipping Developer ID signing"
     adhoc_sign_app_for_local_permissions
 elif security find-identity -v -p codesigning | grep -q "$(printf '%s' "$SIGN_IDENTITY" | sed 's/[][\\.^$*/]/\\&/g')"; then
-    echo "==> Signing with '$SIGN_IDENTITY' (inside-out for Sparkle, then outer bundle)"
-    SPARKLE_FW="$CONTENTS_DIR/Frameworks/Sparkle.framework"
-    SPARKLE_B="$SPARKLE_FW/Versions/B"
-
-    # Inside-out: seal Sparkle's inner components with our identity first so
-    # hardened runtime + notarization accept them. --force replaces the adhoc
-    # signature SwiftPM left in place. No --deep at any step — we walk the
-    # tree ourselves to keep ordering explicit.
-    for xpc in "$SPARKLE_B"/XPCServices/*.xpc; do
-        codesign --force --options runtime --timestamp \
-            --sign "$SIGN_IDENTITY" "$xpc"
-    done
-    codesign --force --options runtime --timestamp \
-        --sign "$SIGN_IDENTITY" "$SPARKLE_B/Autoupdate"
-    codesign --force --options runtime --timestamp \
-        --sign "$SIGN_IDENTITY" "$SPARKLE_B/Updater.app"
-    codesign --force --options runtime --timestamp \
-        --sign "$SIGN_IDENTITY" "$SPARKLE_FW"
-
+    echo "==> Signing with '$SIGN_IDENTITY' (helpers, then outer bundle)"
     # Bundled helpers (hook bridge) also need a proper signature before the
     # outer bundle is sealed, otherwise codesign's nested check rejects the
     # parent with "code object is not signed at all / In subcomponent: ...".
@@ -223,8 +158,7 @@ elif security find-identity -v -p codesigning | grep -q "$(printf '%s' "$SIGN_ID
             --sign "$SIGN_IDENTITY" "$helper"
     done
 
-    # Finally, sign the main bundle. Entitlements only on the top-level app —
-    # Sparkle components have their own entitlements baked into their signatures.
+    # Finally, sign the main bundle. Entitlements only on the top-level app.
     codesign --force --options runtime --timestamp \
         --entitlements "$REPO_ROOT/CodeIsland.entitlements" \
         --sign "$SIGN_IDENTITY" \

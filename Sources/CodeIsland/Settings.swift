@@ -35,7 +35,6 @@ enum SettingsKey {
     static let collapseOnMouseLeave = "collapseOnMouseLeave"
     static let notchAnimationSpeed = "notchAnimationSpeed"
     static let autoCollapseAfterSessionJump = "autoCollapseAfterSessionJump"
-    static let autoExpandOnPermission = "autoExpandOnPermission"
     static let autoExpandOnCompletion = "autoExpandOnCompletion"
     static let pluginSessionMode = "pluginSessionMode"  // "separate" | "merge" | "hide"
     // Read-only watch of Claude Desktop's Cowork / local Chat session store
@@ -44,7 +43,6 @@ enum SettingsKey {
     static let hapticIntensity = "hapticIntensity"      // 1=light, 2=medium, 3=strong
     static let hoverExpandDelay = "hoverExpandDelay"    // seconds the pointer rests before the island opens (0.1–1.0)
     static let showProjectName = "showProjectName"      // false = cards lead with the session title instead of the folder
-    static let autoExpandOnQuestion = "autoExpandOnQuestion"
     static let sessionTimeout = "sessionTimeout"
 
     // Display
@@ -109,9 +107,6 @@ enum SettingsKey {
     /// Session cards: agent checklist progress (TaskCreate / TodoWrite / update_plan).
     static let showTaskProgress = "showTaskProgress"
 
-    // Mascot
-    static let mascotSpeed = "mascotSpeed"
-
     // Session grouping
     static let sessionGroupingMode = "sessionGroupingMode"
 
@@ -120,29 +115,6 @@ enum SettingsKey {
 
     // Island collapsed width scale (percentage: 50–150, default 100)
     static let collapsedWidthScale = "collapsedWidthScale"
-
-    // Default mascot source when no sessions exist (falls back to this instead of always "claude")
-    static let defaultSource = "defaultSource"
-
-    // Buddy companion device
-    static let esp32BridgeEnabled = "esp32BridgeEnabled"
-    static let esp32HeartbeatSeconds = "esp32HeartbeatSeconds"
-    static let buddyScreenBrightnessPercent = "buddyScreenBrightnessPercent"
-    static let buddyScreenOrientation = "buddyScreenOrientation"
-    static let selectedBuddyIdentifier = "selectedBuddyIdentifier"
-    static let selectedBuddyName = "selectedBuddyName"
-
-    // Apple companion (iPhone / StandBy / Apple Watch prototype)
-    static let appleCompanionEnabled = "appleCompanionEnabled"
-    static let appleCompanionHeartbeatSeconds = "appleCompanionHeartbeatSeconds"
-
-    // Auto-approve tools (comma-separated tool names)
-    static let autoApproveTools = "autoApproveTools"
-
-    // Agents whose permission requests are approved without a prompt
-    // (comma-separated sources) — for CLIs already running in their own
-    // Turbo/YOLO/always-proceed mode (#283)
-    static let autoApproveSources = "autoApproveSources"
 
     // Hook cwd exclusion (comma-separated substrings; cwd containing any drops the event)
     static let excludedHookCwdSubstrings = "excludedHookCwdSubstrings"
@@ -177,7 +149,6 @@ struct SettingsDefaults {
     static let collapseOnMouseLeave = true
     static let notchAnimationSpeed = NotchAnimationSpeed.normal
     static let autoCollapseAfterSessionJump = false
-    static let autoExpandOnPermission = true
     static let autoExpandOnCompletion = true
     static let pluginSessionMode = "separate"
     static let trackClaudeDesktopCowork = true
@@ -185,7 +156,6 @@ struct SettingsDefaults {
     static let hapticIntensity = 1          // 1=light
     static let hoverExpandDelay = NotchHoverInteraction.expandDelay
     static let showProjectName = true
-    static let autoExpandOnQuestion = true
     static let sessionTimeout = 30
 
     static let maxPanelHeight = 560
@@ -222,33 +192,11 @@ struct SettingsDefaults {
     static let maxToolHistory = 20
     static let showTaskProgress = true
 
-    static let mascotSpeed = 100  // percentage: 0–300, 0 = silent
-
     static let sessionGroupingMode = "all"
 
     static let showToolStatus = true
 
     static let collapsedWidthScale = 100  // percentage
-
-    static let defaultSource = "claude"
-
-    static let esp32BridgeEnabled = false
-    static let esp32HeartbeatSeconds = 5.0
-    static let buddyScreenBrightnessPercent = 70.0
-    static let buddyScreenOrientation = "up"
-    static let selectedBuddyIdentifier = ""
-    static let selectedBuddyName = ""
-
-    static let appleCompanionEnabled = false
-    static let appleCompanionHeartbeatSeconds = 5.0
-
-    // Default to no auto-approval — every tool call goes through the
-    // approval flow and the user opts in per tool. The previous default
-    // silently approved 9 internal agent tools (TaskCreate, TodoWrite,
-    // EnterPlanMode etc.) which hid those calls from the panel.
-    static let autoApproveTools = ""
-
-    static let autoApproveSources = ""
 
     static let excludedHookCwdSubstrings = ""
 
@@ -283,7 +231,6 @@ class SettingsManager {
             SettingsKey.collapseOnMouseLeave: SettingsDefaults.collapseOnMouseLeave,
             SettingsKey.notchAnimationSpeed: SettingsDefaults.notchAnimationSpeed,
             SettingsKey.autoCollapseAfterSessionJump: SettingsDefaults.autoCollapseAfterSessionJump,
-            SettingsKey.autoExpandOnPermission: SettingsDefaults.autoExpandOnPermission,
             SettingsKey.autoExpandOnCompletion: SettingsDefaults.autoExpandOnCompletion,
             SettingsKey.pluginSessionMode: SettingsDefaults.pluginSessionMode,
             SettingsKey.trackClaudeDesktopCowork: SettingsDefaults.trackClaudeDesktopCowork,
@@ -291,7 +238,6 @@ class SettingsManager {
             SettingsKey.hapticIntensity: SettingsDefaults.hapticIntensity,
             SettingsKey.hoverExpandDelay: SettingsDefaults.hoverExpandDelay,
             SettingsKey.showProjectName: SettingsDefaults.showProjectName,
-            SettingsKey.autoExpandOnQuestion: SettingsDefaults.autoExpandOnQuestion,
             SettingsKey.sessionTimeout: SettingsDefaults.sessionTimeout,
             SettingsKey.maxPanelHeight: SettingsDefaults.maxPanelHeight,
             SettingsKey.maxVisibleSessions: SettingsDefaults.maxVisibleSessions,
@@ -323,21 +269,9 @@ class SettingsManager {
             SettingsKey.rotationInterval: SettingsDefaults.rotationInterval,
             SettingsKey.maxToolHistory: SettingsDefaults.maxToolHistory,
             SettingsKey.showTaskProgress: SettingsDefaults.showTaskProgress,
-            SettingsKey.mascotSpeed: SettingsDefaults.mascotSpeed,
             SettingsKey.sessionGroupingMode: SettingsDefaults.sessionGroupingMode,
             SettingsKey.showToolStatus: SettingsDefaults.showToolStatus,
             SettingsKey.collapsedWidthScale: SettingsDefaults.collapsedWidthScale,
-            SettingsKey.esp32BridgeEnabled: SettingsDefaults.esp32BridgeEnabled,
-            SettingsKey.esp32HeartbeatSeconds: SettingsDefaults.esp32HeartbeatSeconds,
-            SettingsKey.buddyScreenBrightnessPercent: SettingsDefaults.buddyScreenBrightnessPercent,
-            SettingsKey.buddyScreenOrientation: SettingsDefaults.buddyScreenOrientation,
-            SettingsKey.selectedBuddyIdentifier: SettingsDefaults.selectedBuddyIdentifier,
-            SettingsKey.selectedBuddyName: SettingsDefaults.selectedBuddyName,
-            SettingsKey.appleCompanionEnabled: SettingsDefaults.appleCompanionEnabled,
-            SettingsKey.appleCompanionHeartbeatSeconds: SettingsDefaults.appleCompanionHeartbeatSeconds,
-            SettingsKey.defaultSource: SettingsDefaults.defaultSource,
-            SettingsKey.autoApproveTools: SettingsDefaults.autoApproveTools,
-            SettingsKey.autoApproveSources: SettingsDefaults.autoApproveSources,
             SettingsKey.excludedHookCwdSubstrings: SettingsDefaults.excludedHookCwdSubstrings,
             SettingsKey.claudeConfigDir: SettingsDefaults.claudeConfigDir,
             SettingsKey.extraConfigDirs: SettingsDefaults.extraConfigDirs,
@@ -472,58 +406,6 @@ class SettingsManager {
         set { defaults.set(newValue, forKey: SettingsKey.sessionGroupingMode) }
     }
 
-    var defaultSource: String {
-        get { defaults.string(forKey: SettingsKey.defaultSource) ?? SettingsDefaults.defaultSource }
-        set { defaults.set(newValue, forKey: SettingsKey.defaultSource) }
-    }
-
-    /// All known auto-approvable tool names (for UI display).
-    static let allAutoApproveTools: [(name: String, description: String)] = [
-        ("TaskCreate", "Create task"),
-        ("TaskUpdate", "Update task"),
-        ("TaskGet", "Get task"),
-        ("TaskList", "List tasks"),
-        ("TaskOutput", "Get task output"),
-        ("TaskStop", "Stop task"),
-        ("TodoRead", "Read todos"),
-        ("TodoWrite", "Write todos"),
-        ("EnterPlanMode", "Enter plan mode"),
-        ("ExitPlanMode", "Exit plan mode"),
-    ]
-
-    var autoApproveTools: Set<String> {
-        get {
-            let raw = defaults.string(forKey: SettingsKey.autoApproveTools) ?? SettingsDefaults.autoApproveTools
-            return Set(raw.split(separator: ",").map(String.init))
-        }
-        set {
-            defaults.set(newValue.sorted().joined(separator: ","), forKey: SettingsKey.autoApproveTools)
-        }
-    }
-
-    /// Agent sources whose permission requests are approved without ever showing
-    /// a card. For CLIs the user has already put in an always-proceed mode
-    /// (Antigravity Turbo, Cursor YOLO, …), where a second confirmation on the
-    /// island is exactly the interruption that mode exists to remove (#283).
-    /// Stored as a comma-separated list of source ids; matched after
-    /// `normalizedSupportedSource`, so aliases and raw spellings both work.
-    var autoApproveSources: Set<String> {
-        get {
-            let raw = defaults.string(forKey: SettingsKey.autoApproveSources)
-                ?? SettingsDefaults.autoApproveSources
-            let entries = raw.split(separator: ",")
-                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
-                .filter { !$0.isEmpty }
-            return Set(entries.flatMap { entry -> [String] in
-                guard let normalized = SessionSnapshot.normalizedSupportedSource(entry) else { return [entry] }
-                return [entry, normalized]
-            })
-        }
-        set {
-            defaults.set(newValue.sorted().joined(separator: ","), forKey: SettingsKey.autoApproveSources)
-        }
-    }
-
     /// Comma-separated list of substrings; any hook event whose `cwd` contains
     /// any of them is silently dropped by `HookServer` (#125 plugin / claude-mem).
     var excludedHookCwdSubstrings: String {
@@ -574,10 +456,6 @@ struct ShortcutBinding {
 
 enum ShortcutAction: String, CaseIterable, Identifiable {
     case togglePanel
-    case approve
-    case approveAlways
-    case deny
-    case skipQuestion
     case jumpToTerminal
 
     var id: String { rawValue }
@@ -585,10 +463,6 @@ enum ShortcutAction: String, CaseIterable, Identifiable {
     var defaultBinding: ShortcutBinding? {
         switch self {
         case .togglePanel:    return ShortcutBinding(keyCode: 34, modifiers: [.command, .shift]) // ⌘⇧I
-        case .approve:        return ShortcutBinding(keyCode: 0,  modifiers: [.command, .shift]) // ⌘⇧A
-        case .deny:           return ShortcutBinding(keyCode: 2,  modifiers: [.command, .shift]) // ⌘⇧D
-        case .approveAlways:  return nil
-        case .skipQuestion:   return nil
         case .jumpToTerminal: return nil
         }
     }

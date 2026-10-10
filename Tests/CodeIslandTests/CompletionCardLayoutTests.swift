@@ -31,7 +31,6 @@ final class CompletionCardLayoutTests: XCTestCase {
             defaults.removeObject(forKey: key)
         }
         defaults.set(false, forKey: SettingsKey.showUsageStats)
-        MascotAnimationGate.shared.setPanelVisible(false)
     }
 
     override func tearDown() {
@@ -39,7 +38,6 @@ final class CompletionCardLayoutTests: XCTestCase {
         for key in keys {
             if let value = saved[key] { defaults.set(value, forKey: key) } else { defaults.removeObject(forKey: key) }
         }
-        MascotAnimationGate.shared.setPanelVisible(true)
         super.tearDown()
     }
 
@@ -230,7 +228,6 @@ struct PanelHost {
             ?? SettingsDefaults.maxVisibleSessions
         height = PanelHeightMetrics.desiredHeight(maxVisibleSessions: maxVisible)
         let view = NotchPanelView(appState: state, hasNotch: true, notchHeight: notchHeight, notchW: 185, screenWidth: 1512)
-            .environment(\.mascotStaticTime, 5.2)
             .background(Color(red: 1, green: 0, blue: 0))
         host = NSHostingView(rootView: AnyView(view))
         // As PanelWindowController hosts it: the window's size, not the content's.

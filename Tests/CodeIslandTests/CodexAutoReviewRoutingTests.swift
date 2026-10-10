@@ -156,7 +156,7 @@ final class CodexAutoReviewRoutingTests: XCTestCase {
         XCTAssertEqual(CodexPermissionRules.transcriptReviewerValue(event.rawJSON), "auto_review")
     }
 
-    func testHiddenSubagentPermissionIsLeftToAutoReviewInsteadOfAllowed() throws {
+    func testHiddenSubagentPermissionIsNeverDecided() throws {
         let previousMode = UserDefaults.standard.object(forKey: SettingsKey.pluginSessionMode)
         UserDefaults.standard.set("hide", forKey: SettingsKey.pluginSessionMode)
         defer {
@@ -169,7 +169,8 @@ final class CodexAutoReviewRoutingTests: XCTestCase {
 
         let url = root.appendingPathComponent("child.jsonl")
         let meta = #"{"type":"session_meta","payload":{"id":"child","source":{"subagent":{"thread_spawn":{"parent_thread_id":"parent","depth":1}}}}}"#
-        for (reviewer, expected) in [("auto_review", "{}"), ("user", #""behavior":"allow""#)] {
+        // Hidden or not, the island never decides: both come back undecided.
+        for (reviewer, expected) in [("auto_review", "{}"), ("user", "{}")] {
             var data = Data((meta + "\n").utf8)
             data.append(try JSONSerialization.data(withJSONObject: context("current", reviewer)))
             data.append(0x0A)

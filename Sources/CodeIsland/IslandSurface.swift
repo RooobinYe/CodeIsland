@@ -4,10 +4,6 @@ enum IslandSurface: Equatable {
     case collapsed
     /// 用户主动展开，显示 session 列表
     case sessionList
-    /// 显示权限审批卡片
-    case approvalCard(sessionId: String)
-    /// 显示问答卡片
-    case questionCard(sessionId: String)
     /// 自动展开显示完成通知
     case completionCard(sessionId: String)
 
@@ -17,20 +13,7 @@ enum IslandSurface: Equatable {
     var sessionId: String? {
         switch self {
         case .collapsed, .sessionList: return nil
-        case .approvalCard(let id), .questionCard(let id), .completionCard(let id): return id
+        case .completionCard(let id): return id
         }
-    }
-
-    /// Session of the surface only when it is the matching card kind. A
-    /// permission shortcut fired while a question card is up must not address
-    /// that session's (non-existent) approval and discard the live card. (#308)
-    var approvalSessionId: String? {
-        if case .approvalCard(let id) = self { return id }
-        return nil
-    }
-
-    var questionSessionId: String? {
-        if case .questionCard(let id) = self { return id }
-        return nil
     }
 }

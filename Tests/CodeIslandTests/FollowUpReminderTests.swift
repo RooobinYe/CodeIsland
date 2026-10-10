@@ -19,12 +19,9 @@ final class FollowUpReminderTests: XCTestCase {
     /// Reminders the island kept to itself (`locallySuppressed`), which only
     /// remote channels hear about.
     private var keptOffTheMac: [FollowUpReminder] = []
-    private var pending: [Task<Data, Never>] = []
     private var savedDefaults: [String: Any?] = [:]
 
     private let watchedKeys = [
-        SettingsKey.autoExpandOnPermission,
-        SettingsKey.autoExpandOnQuestion,
         SettingsKey.smartSuppress,
         SettingsKey.completionNotificationStyle,
     ]
@@ -34,8 +31,6 @@ final class FollowUpReminderTests: XCTestCase {
         for key in watchedKeys {
             savedDefaults[key] = UserDefaults.standard.object(forKey: key)
         }
-        UserDefaults.standard.set(true, forKey: SettingsKey.autoExpandOnPermission)
-        UserDefaults.standard.set(true, forKey: SettingsKey.autoExpandOnQuestion)
         UserDefaults.standard.set(false, forKey: SettingsKey.smartSuppress)
         // Glance keeps completions off the card path, so tests see only what
         // the reminders themselves do to the surface.
@@ -48,7 +43,6 @@ final class FollowUpReminderTests: XCTestCase {
         played = []
         fired = []
         keptOffTheMac = []
-        pending = []
 
         appState = AppState()
         followUps = appState.followUps
@@ -70,13 +64,6 @@ final class FollowUpReminderTests: XCTestCase {
     }
 
     override func tearDown() async throws {
-        for sid in Set(appState.permissionQueue.map { $0.event.sessionId ?? "default" }
-            + appState.questionQueue.map { $0.event.sessionId ?? "default" }) {
-            appState.handlePeerDisconnect(sessionId: sid)
-        }
-        // `try?`: a stuck request is already recorded as a failure; the rest of
-        // the teardown must still run so the defaults are restored.
-        for task in pending { _ = try? await awaitValue(of: task) }
         followUps = nil
         appState = nil
         for key in watchedKeys {
@@ -122,7 +109,7 @@ final class FollowUpReminderTests: XCTestCase {
 
     // MARK: - Approvals
 
-    func testWaitingApprovalRemindsAndReopensItsCard() async throws {
+    func testWaitingApprovalRemindsAndHints() async throws {
         try await requestApproval("appr")
         XCTAssertEqual(followUps.armedWakeDate, now.addingTimeInterval(60))
         appState.surface = .collapsed   // the user closed it and walked off
@@ -134,7 +121,13 @@ final class FollowUpReminderTests: XCTestCase {
         XCTAssertEqual(fired.first?.sessionId, "appr")
         XCTAssertEqual(fired.first?.delivery, .onTime)
         XCTAssertEqual(played, ["PermissionRequest"])
-        XCTAssertEqual(appState.surface, .approvalCard(sessionId: "appr"))
+        XCTAssertEqual(appState.surface, .collapsed, "a wait has no card to open")
+        XCTAssertTrue(followUps.hintActive)
+        XCTAssertEqual(followUps.hintPulse, 1)
+
+        // Answered in the terminal: the hint goes out on its own.
+        try answer("appr")
+        XCTAssertFalse(followUps.hintActive)
     }
 
     func testApprovalRemindsAtMostThreeTimes() async throws {
@@ -148,26 +141,10 @@ final class FollowUpReminderTests: XCTestCase {
     func testAnsweredApprovalIsNotReminded() async throws {
         try await requestApproval("answered")
         XCTAssertNotNil(followUps.armedWakeDate, "tracked before the cancel")
-        appState.approvePermission(expectedSessionId: "answered")
+        try answer("answered")
         XCTAssertNil(followUps.armedWakeDate)
         await advance(600)
         XCTAssertEqual(fired, [])
-    }
-
-    func testDeniedApprovalIsNotReminded() async throws {
-        try await requestApproval("denied")
-        XCTAssertNotNil(followUps.armedWakeDate, "tracked before the cancel")
-        appState.denyPermission(expectedSessionId: "denied")
-        await advance(600)
-        XCTAssertEqual(fired, [])
-    }
-
-    func testDismissedApprovalIsNotReminded() async throws {
-        try await requestApproval("dismissed")
-        XCTAssertNotNil(followUps.armedWakeDate, "tracked before the cancel")
-        appState.dismissPermissionPrompt(expectedSessionId: "dismissed")
-        await advance(600)
-        XCTAssertEqual(fired, [], "dismissing hides the prompt on purpose")
     }
 
     func testJumpingToTheSessionStopsItsReminders() async throws {
@@ -180,24 +157,7 @@ final class FollowUpReminderTests: XCTestCase {
         XCTAssertEqual(fired, [])
     }
 
-    func testAutoExpandOffOnlyChimesAndHints() async throws {
-        UserDefaults.standard.set(false, forKey: SettingsKey.autoExpandOnPermission)
-        try await requestApproval("quiet-card")
-        XCTAssertEqual(appState.surface, .collapsed)
-
-        await advance(60)
-        XCTAssertEqual(played, ["PermissionRequest"])
-        XCTAssertEqual(appState.surface, .collapsed, "the card must not open by itself")
-        XCTAssertTrue(followUps.hintActive)
-        XCTAssertEqual(followUps.hintPulse, 1)
-
-        // Answered in the terminal: the hint goes out on its own.
-        appState.handlePeerDisconnect(sessionId: "quiet-card")
-        XCTAssertFalse(followUps.hintActive)
-    }
-
     func testOpeningTheIslandClearsTheHint() async throws {
-        UserDefaults.standard.set(false, forKey: SettingsKey.autoExpandOnPermission)
         try await requestApproval("hint-open")
         await advance(60)
         XCTAssertTrue(followUps.hintActive)
@@ -205,33 +165,12 @@ final class FollowUpReminderTests: XCTestCase {
         XCTAssertFalse(followUps.hintActive)
     }
 
-    /// The card under the pointer is not reminded about while it is being
-    /// read — but reading it once is not answering it: the reminder comes
-    /// back an interval later, with no attempt spent.
-    func testCardUnderThePointerPostponesItsReminder() async throws {
-        try await requestApproval("looking")
-        XCTAssertEqual(appState.surface, .approvalCard(sessionId: "looking"))
-        pointerOverPanel = true
-        followUps.pointerOverIsland = true
-
-        await advance(60)
-        XCTAssertEqual(fired, [])
-        XCTAssertEqual(played, [])
-        XCTAssertEqual(keptOffTheMac.map(\.sessionId), ["looking"])
-        XCTAssertEqual(followUps.armedWakeDate, now.addingTimeInterval(60), "postponed, not silenced")
-        pointerOverPanel = false
-        followUps.pointerOverIsland = false
-        await advance(60)
-        XCTAssertEqual(fired.map(\.attempt), [1], "the skipped reminder was not counted")
-        XCTAssertEqual(played, ["PermissionRequest"])
-    }
-
     /// The panel's window is a fixed, mostly transparent canvas around the
     /// island. A pointer resting in it — below the notch, beside the card —
     /// is not on the card, and does not make anyone a reader of it.
     func testPointerInTheWindowButOffTheIslandStillReminds() async throws {
         try await requestApproval("beside")
-        XCTAssertEqual(appState.surface, .approvalCard(sessionId: "beside"))
+        appState.surface = .sessionList
         pointerOverPanel = true
         followUps.pointerOverIsland = false
 
@@ -265,15 +204,6 @@ final class FollowUpReminderTests: XCTestCase {
 
         await advance(60)
         XCTAssertEqual(fired.map(\.sessionId), ["stale-hover"])
-    }
-
-    /// An auto-opened card with nobody in front of it is exactly who the
-    /// reminder is for: it chimes, and the card simply stays up.
-    func testOpenCardNobodyIsLookingAtStillChimes() async throws {
-        try await requestApproval("unattended")
-        await advance(60)
-        XCTAssertEqual(played, ["PermissionRequest"])
-        XCTAssertEqual(appState.surface, .approvalCard(sessionId: "unattended"))
     }
 
     func testSessionTabInFrontPostpones() async throws {
@@ -330,21 +260,6 @@ final class FollowUpReminderTests: XCTestCase {
         XCTAssertEqual(fired.map(\.sessionId), ["other-tab"])
     }
 
-    /// `showNextPending` moves the next visible request to the head. Done as a
-    /// remove + insert, the queue briefly lacked it and its reminder started
-    /// over (silenced or not).
-    func testPromotingTheNextRequestKeepsItsReminderClock() async throws {
-        try await requestApproval("first")
-        await advance(30)
-        try await requestApproval("second")
-        await advance(15)
-        appState.approvePermission(expectedSessionId: "first")   // "second" moves to the head
-        appState.surface = .collapsed
-
-        await advance(45)
-        XCTAssertEqual(fired.map(\.sessionId), ["second"], "due a minute after it was queued")
-    }
-
     // MARK: - Held back
 
     func testLockedScreenDefersThenCatchesUpRightAfterUnlock() async throws {
@@ -374,7 +289,7 @@ final class FollowUpReminderTests: XCTestCase {
         try await requestApproval("resolved-locked")
         heldBack = true
         await advance(60)
-        appState.approvePermission(expectedSessionId: "resolved-locked")
+        try answer("resolved-locked")
         heldBack = false
         await advance(30)
         XCTAssertEqual(fired.map(\.delivery), [.deferred])
@@ -390,43 +305,20 @@ final class FollowUpReminderTests: XCTestCase {
 
     // MARK: - Questions
 
-    func testWaitingQuestionReopensItsCard() async throws {
+    func testWaitingQuestionRemindsAsAQuestion() async throws {
         let event = try event([
             "hook_event_name": "PermissionRequest",
             "session_id": "ask",
             "tool_name": "AskUserQuestion",
             "tool_input": ["questions": [["question": "Which?", "options": [["label": "A"], ["label": "B"]]]]],
         ])
-        pending.append(await startHookRequest { [appState] in appState!.handleAskUserQuestion(event, continuation: $0) })
-        XCTAssertEqual(appState.questionQueue.count, 1)
-        appState.surface = .collapsed
+        appState.handleBlockingRequest(event, status: .waitingQuestion)
 
         await advance(60)
         XCTAssertEqual(fired.map(\.kind), [.question])
-        XCTAssertEqual(appState.surface, .questionCard(sessionId: "ask"))
-        XCTAssertEqual(played, ["PermissionRequest"])
-    }
-
-    /// "Auto-expand on question" off: the reminder chimes and hints like an
-    /// approval with its switch off, and the question keeps its click-to-open
-    /// badge instead of the card popping open.
-    func testQuestionAutoExpandOffOnlyChimesAndHints() async throws {
-        UserDefaults.standard.set(false, forKey: SettingsKey.autoExpandOnQuestion)
-        let event = try event([
-            "hook_event_name": "PermissionRequest",
-            "session_id": "quiet-ask",
-            "tool_name": "AskUserQuestion",
-            "tool_input": ["questions": [["question": "Which?", "options": [["label": "A"], ["label": "B"]]]]],
-        ])
-        pending.append(await startHookRequest { [appState] in appState!.handleAskUserQuestion(event, continuation: $0) })
         XCTAssertEqual(appState.surface, .collapsed)
-
-        await advance(60)
-        XCTAssertEqual(fired.map(\.kind), [.question])
-        XCTAssertEqual(played, ["PermissionRequest"])
-        XCTAssertEqual(appState.surface, .collapsed, "the card must not open by itself")
         XCTAssertTrue(followUps.hintActive)
-        XCTAssertEqual(appState.hiddenPendingQuestionSessionId, "quiet-ask")
+        XCTAssertEqual(played, ["PermissionRequest"])
     }
 
     // MARK: - Completions
@@ -500,8 +392,8 @@ final class FollowUpReminderTests: XCTestCase {
         XCTAssertTrue(followUps.scheduler.isEmpty)
     }
 
-    /// Several items due in one tick: one card, one chime per kind.
-    func testOneTickOneCardOneChimePerKind() async throws {
+    /// Several items due in one tick: one chime per kind, all hinted.
+    func testOneTickOneChimePerKind() async throws {
         try await requestApproval("burst-1")
         try await requestApproval("burst-2")
         appState.handleEvent(try event(["hook_event_name": "Stop", "session_id": "burst-done"]))
@@ -510,8 +402,8 @@ final class FollowUpReminderTests: XCTestCase {
         await advance(60)
         XCTAssertEqual(fired.map(\.kind), [.approval, .approval, .completion])
         XCTAssertEqual(played, ["PermissionRequest", "Stop"])
-        XCTAssertEqual(appState.surface, .approvalCard(sessionId: "burst-1"))
-        XCTAssertTrue(followUps.hintActive, "the others still light the hint for later")
+        XCTAssertEqual(appState.surface, .collapsed)
+        XCTAssertTrue(followUps.hintActive)
     }
 
     // MARK: - Helpers
@@ -529,9 +421,15 @@ final class FollowUpReminderTests: XCTestCase {
             "tool_input": ["command": "echo hi"],
         ]
         if let termApp { payload["_term_app"] = termApp }
-        let request = try event(payload)
-        pending.append(await startHookRequest { [appState] in appState!.handlePermissionRequest(request, continuation: $0) })
-        XCTAssertTrue(appState.permissionQueue.contains { $0.event.sessionId == sessionId })
+        appState.handleBlockingRequest(try event(payload), status: .waitingApproval)
+        XCTAssertEqual(appState.displayOnlyWaitKind(forSession: sessionId), .approval)
+    }
+
+    /// Answered in the agent: its next tool event arrives.
+    private func answer(_ sessionId: String) throws {
+        appState.handleEvent(try event([
+            "hook_event_name": "PostToolUse", "session_id": sessionId, "tool_name": "Bash",
+        ]))
     }
 
     private func event(_ payload: [String: Any]) throws -> HookEvent {

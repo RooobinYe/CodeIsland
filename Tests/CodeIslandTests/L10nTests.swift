@@ -134,10 +134,6 @@ final class L10nTests: XCTestCase {
         let customSoundSet = L10n.shared["custom_sound_set"]
         let formatted = String(format: customSoundSet, "mysound.wav")
         XCTAssertEqual(formatted, "Özel: mysound.wav")
-
-        let updateAvailable = L10n.shared["update_available_body"]
-        let formattedUpdate = String(format: updateAvailable, "1.0.19", "1.0.18")
-        XCTAssertEqual(formattedUpdate, "CodeIsland 1.0.19 mevcut (şimdiki: 1.0.18). İndirmek ister misiniz?")
     }
 
     func testKoreanNumericPlaceholdersWork() {
@@ -146,10 +142,6 @@ final class L10nTests: XCTestCase {
         let customSoundSet = L10n.shared["custom_sound_set"]
         let formatted = String(format: customSoundSet, "mysound.wav")
         XCTAssertEqual(formatted, "사용자 지정: mysound.wav")
-
-        let updateAvailable = L10n.shared["update_available_body"]
-        let formattedUpdate = String(format: updateAvailable, "1.0.19", "1.0.18")
-        XCTAssertEqual(formattedUpdate, "CodeIsland 1.0.19 버전을 사용할 수 있습니다(현재: 1.0.18). 다운로드하시겠습니까?")
     }
 
     func testJapaneseNumericPlaceholdersWork() {
@@ -158,10 +150,6 @@ final class L10nTests: XCTestCase {
         let customSoundSet = L10n.shared["custom_sound_set"]
         let formatted = String(format: customSoundSet, "mysound.wav")
         XCTAssertEqual(formatted, "カスタム: mysound.wav")
-
-        let updateAvailable = L10n.shared["update_available_body"]
-        let formattedUpdate = String(format: updateAvailable, "1.0.19", "1.0.18")
-        XCTAssertEqual(formattedUpdate, "CodeIsland 1.0.19 が利用可能です (現在: 1.0.18)。ダウンロードしますか？")
     }
 
     func testGermanNumericPlaceholdersWork() {
@@ -170,10 +158,6 @@ final class L10nTests: XCTestCase {
         let customSoundSet = L10n.shared["custom_sound_set"]
         let formatted = String(format: customSoundSet, "mysound.wav")
         XCTAssertEqual(formatted, "Eigen: mysound.wav")
-
-        let updateAvailable = L10n.shared["update_available_body"]
-        let formattedUpdate = String(format: updateAvailable, "1.0.19", "1.0.18")
-        XCTAssertEqual(formattedUpdate, "CodeIsland 1.0.19 ist verfügbar (aktuell: 1.0.18). Möchtest du es herunterladen?")
     }
 
     // MARK: - reply_complete_placeholder

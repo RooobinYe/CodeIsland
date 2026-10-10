@@ -14,10 +14,9 @@ import CodeIslandCore
 final class CollapsedRightWingLayoutTests: XCTestCase {
     private let suiteName = "CollapsedRightWingLayoutTests"
     private var suite: UserDefaults!
-    private var responses: [Task<Data, Never>] = []
     private var saved: [String: Any?] = [:]
     private let standardKeys = [
-        SettingsKey.autoExpandOnQuestion, SettingsKey.smartSuppress, SettingsKey.followUpReminderMinutes,
+        SettingsKey.smartSuppress, SettingsKey.followUpReminderMinutes,
     ]
     private let notch: CGFloat = 185
 
@@ -26,13 +25,9 @@ final class CollapsedRightWingLayoutTests: XCTestCase {
         _ = NSApplication.shared
         suite = try XCTUnwrap(UserDefaults(suiteName: suiteName))
         suite.removePersistentDomain(forName: suiteName)
-        // AppState reads these from the standard defaults: the question stays
-        // behind the collapsed bar's badge instead of opening its card.
         for key in standardKeys { saved[key] = UserDefaults.standard.object(forKey: key) }
-        UserDefaults.standard.set(false, forKey: SettingsKey.autoExpandOnQuestion)
         UserDefaults.standard.set(false, forKey: SettingsKey.smartSuppress)
         UserDefaults.standard.set(0, forKey: SettingsKey.followUpReminderMinutes)
-        MascotAnimationGate.shared.setPanelVisible(false)
     }
 
     override func tearDown() async throws {
@@ -40,7 +35,6 @@ final class CollapsedRightWingLayoutTests: XCTestCase {
         for key in standardKeys {
             if let value = saved[key] ?? nil { UserDefaults.standard.set(value, forKey: key) } else { UserDefaults.standard.removeObject(forKey: key) }
         }
-        MascotAnimationGate.shared.setPanelVisible(true)
         try await super.tearDown()
     }
 
@@ -63,7 +57,6 @@ final class CollapsedRightWingLayoutTests: XCTestCase {
             XCTAssertNil(g.intrusion, "\(name): the right wing draws under the notch at \(g.intrusion ?? 0)pt")
             XCTAssertLessThanOrEqual(g.barRight, 620, "\(name): the bar runs past the panel window")
             XCTAssertGreaterThanOrEqual(g.barLeft, 0, "\(name): the bar runs past the panel window")
-            await drain(state)
         }
     }
 
@@ -79,7 +72,6 @@ final class CollapsedRightWingLayoutTests: XCTestCase {
         let base = notch + 82 + 20 + 1512 * 0.03
         XCTAssertEqual(g.barRight, (620 + base) / 2 - 1, accuracy: 1)
         XCTAssertEqual(g.barLeft, (620 - base) / 2 + 1, accuracy: 1)
-        await drain(state)
     }
 
     // MARK: - Fixture
@@ -113,19 +105,12 @@ final class CollapsedRightWingLayoutTests: XCTestCase {
             ]]],
         ]
         let event = try XCTUnwrap(HookEvent(from: try JSONSerialization.data(withJSONObject: payload)))
-        responses.append(await startHookRequest { state.handleAskUserQuestion(event, continuation: $0) })
-        XCTAssertEqual(state.hiddenPendingQuestionSessionId, "s1", "the question should wait behind the badge")
+        state.handleBlockingRequest(event, status: .waitingQuestion)
+        XCTAssertEqual(state.status, .waitingQuestion, "the wait should show as the collapsed bar's bell")
         state.glanceCompletionActive = glance
         return state
     }
 
-    private func drain(_ state: AppState) async {
-        for event in state.questionQueue.map(\.event) {
-            state.handlePeerDisconnect(sessionId: event.sessionId ?? "default", agentId: event.agentId)
-        }
-        for task in responses { _ = try? await awaitValue(of: task) }
-        responses = []
-    }
 
     // MARK: - Rendering
 
@@ -134,7 +119,6 @@ final class CollapsedRightWingLayoutTests: XCTestCase {
     private func renderedGeometry(_ state: AppState) throws -> (barLeft: CGFloat, barRight: CGFloat, intrusion: CGFloat?) {
         let windowWidth: CGFloat = 620, height: CGFloat = 64, notchHeight: CGFloat = 32
         let view = NotchPanelView(appState: state, hasNotch: true, notchHeight: notchHeight, notchW: notch, screenWidth: 1512)
-            .environment(\.mascotStaticTime, 5.2)
             .defaultAppStorage(suite)
             .background(Color(red: 1, green: 0, blue: 0))
         let host = NSHostingView(rootView: view)

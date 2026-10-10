@@ -31,16 +31,14 @@ final class FollowUpReminderPushTests: XCTestCase {
     private var now = Date(timeIntervalSinceReferenceDate: 90_000)
     private var played: [String] = []
     private var terminalInFront = true
-    private var pending: [Task<Data, Never>] = []
     private var saved: [String: Any?] = [:]
     private let keys = [
-        SettingsKey.autoExpandOnPermission, SettingsKey.smartSuppress, SettingsKey.completionNotificationStyle,
+        SettingsKey.smartSuppress, SettingsKey.completionNotificationStyle,
     ]
 
     override func setUp() async throws {
         try await super.setUp()
         for k in keys { saved[k] = UserDefaults.standard.object(forKey: k) }
-        UserDefaults.standard.set(true, forKey: SettingsKey.autoExpandOnPermission)
         UserDefaults.standard.set(true, forKey: SettingsKey.smartSuppress)
         UserDefaults.standard.set("glance", forKey: SettingsKey.completionNotificationStyle)
 
@@ -58,7 +56,6 @@ final class FollowUpReminderPushTests: XCTestCase {
         now = Date(timeIntervalSinceReferenceDate: 90_000)
         played = []
         terminalInFront = true
-        pending = []
         let notifier = PushNotifier.shared
         notifier.resetForTesting()
         notifier.defaults = defaults
@@ -82,13 +79,6 @@ final class FollowUpReminderPushTests: XCTestCase {
     }
 
     override func tearDown() async throws {
-        let waiters = appState.permissionQueue.map(\.event) + appState.questionQueue.map(\.event)
-        for event in waiters {
-            appState.handlePeerDisconnect(sessionId: event.sessionId ?? "default", agentId: event.agentId)
-        }
-        // `try?`: a stuck request is already recorded as a failure; the
-        // rest of the teardown must still run so the defaults are restored.
-        for t in pending { _ = try? await awaitValue(of: t) }
         let notifier = PushNotifier.shared
         notifier.transport = URLSessionPushTransport.shared
         notifier.presence = { PushPresence.current() }
@@ -142,7 +132,7 @@ final class FollowUpReminderPushTests: XCTestCase {
         terminalInFront = false
         await advance(60)
         XCTAssertEqual(played, ["PermissionRequest"])
-        XCTAssertEqual(appState.surface, .approvalCard(sessionId: "present-front"))
+        XCTAssertEqual(appState.surface, .collapsed, "a wait has no card on the island")
     }
 
     func testPushGateDecidesOnTheLocalSuppression() {
@@ -211,8 +201,8 @@ final class FollowUpReminderPushTests: XCTestCase {
             "hook_event_name": "PermissionRequest", "session_id": sid, "tool_name": "Bash",
             "tool_input": ["command": "make deploy"], "_term_app": "iTerm.app",
         ] as [String: Any])))
-        pending.append(await startHookRequest { [appState] in appState!.handlePermissionRequest(e, continuation: $0) })
-        XCTAssertNotNil(appState.pendingPermission(forSession: sid))
+        appState.handleBlockingRequest(e, status: .waitingApproval)
+        XCTAssertEqual(appState.displayOnlyWaitKind(forSession: sid), .approval)
     }
 
     private func reminderPushes() -> [[String: Any]] {

@@ -35,38 +35,4 @@ final class AppDistributionTests: XCTestCase {
         }
     }
 
-    // MARK: - Read-only install location
-
-    func testNormalInstallIsNotFlagged() {
-        XCTAssertNil(AppInstallLocation.readOnlyReason(
-            bundlePath: "/Applications/CodeIsland.app", volumeIsReadOnly: false))
-        XCTAssertNil(AppInstallLocation.readOnlyReason(
-            bundlePath: "/Users/me/Applications/CodeIsland.app", volumeIsReadOnly: false))
-    }
-
-    func testTranslocatedCopyIsFlaggedEvenThoughItsMountIsReadOnly() {
-        let path = "/private/var/folders/xy/abc/T/AppTranslocation/1F2E3D4C-0000-1111-2222-333344445555/d/CodeIsland.app"
-        XCTAssertEqual(AppInstallLocation.readOnlyReason(bundlePath: path, volumeIsReadOnly: true), .translocated)
-        XCTAssertEqual(AppInstallLocation.readOnlyReason(bundlePath: path, volumeIsReadOnly: false), .translocated)
-    }
-
-    func testRunningFromTheMountedDiskImageIsFlagged() {
-        XCTAssertEqual(
-            AppInstallLocation.readOnlyReason(bundlePath: "/Volumes/CodeIsland/CodeIsland.app", volumeIsReadOnly: true),
-            .diskImage
-        )
-    }
-
-    /// An external drive under /Volumes that *is* writable updates fine.
-    func testWritableExternalVolumeIsNotFlagged() {
-        XCTAssertNil(AppInstallLocation.readOnlyReason(
-            bundlePath: "/Volumes/External/Apps/CodeIsland.app", volumeIsReadOnly: false))
-    }
-
-    func testOtherReadOnlyVolumeIsFlagged() {
-        XCTAssertEqual(
-            AppInstallLocation.readOnlyReason(bundlePath: "/Applications/CodeIsland.app", volumeIsReadOnly: true),
-            .readOnlyVolume
-        )
-    }
 }

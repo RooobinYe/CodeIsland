@@ -750,8 +750,7 @@ public struct QuestionPayload {
     public let descriptions: [String]?
     public let header: String?
     /// When true the answer is sensitive (e.g. a Codex `isSecret` plan-mode
-    /// prompt). Remote peripherals (companion / ESP32) must not stream the
-    /// question text or options to avoid leaking secrets off-device.
+    /// prompt): pushes must not carry the question text or options off-device.
     public let isSecret: Bool
 
     public init(

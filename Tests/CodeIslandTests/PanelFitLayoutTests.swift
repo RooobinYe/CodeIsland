@@ -15,11 +15,9 @@ final class PanelFitLayoutTests: XCTestCase {
         super.setUp()
         _ = NSApplication.shared
         sandbox = DefaultsSandbox(keys: DefaultsSandbox.allSettingsKeys)
-        MascotAnimationGate.shared.setPanelVisible(false)
     }
 
     override func tearDown() {
-        MascotAnimationGate.shared.setPanelVisible(true)
         sandbox?.restore()
         super.tearDown()
     }
@@ -65,63 +63,6 @@ final class PanelFitLayoutTests: XCTestCase {
         let twelve = BranchLabelMetrics.minimumWidth(for: String(repeating: "x", count: 12), fontSize: 11)
         XCTAssertLessThan(short, twelve, "a short branch must not be padded")
         XCTAssertEqual(long, twelve, accuracy: 1, "a long branch keeps room for twelve characters")
-    }
-
-    // MARK: - Question card
-
-    func testQuestionWithManyOptionsKeepsItsButtonsInsideTheWindow() async throws {
-        // Ten options with descriptions used to push option 10, "Other" and
-        // the Dismiss / Skip row past the bottom of the 510pt window.
-        let state = AppState()
-        var s = SessionSnapshot()
-        s.source = "claude"
-        s.cwd = "/Users/dev/code/web-app"
-        s.status = .waitingQuestion
-        state.sessions = ["q": s]
-        state.activeSessionId = "q"
-        let regions = (1...10).map { ("region-\($0)", Optional("Latency to the team: medium")) }
-        let release = try await DemoRequests.enqueueQuestion(state, sessionId: "q", cwd: "/Users/dev/code/web-app", items: [
-            ("Which region should the staging stack deploy to?", "Region", regions, false),
-        ])
-        defer { release() }
-        state.refreshDerivedState()
-        state.surface = .questionCard(sessionId: "q")
-        let panel = try PanelHost(state, notchHeight: 32)
-        defer { panel.close() }
-        panel.settle()
-        XCTAssertGreaterThan(try panel.gapUnderPanel(), 0, "the question card runs off the bottom of the window")
-    }
-
-    // MARK: - Approval card
-
-    func testApprovalCardHeadsItselfWithTheSessionAsking() async throws {
-        // With several sessions queued, the card said only "! Bash" — not
-        // which project's command it was about to allow. It now opens with
-        // the same context row as a question card (agent icon + project),
-        // which only a card whose session is gone goes without.
-        func cardHeight(sessionKnown: Bool) async throws -> CGFloat {
-            let state = AppState()
-            var s = SessionSnapshot()
-            s.source = "codex"
-            s.cwd = "/Users/dev/code/api-server"
-            s.status = .waitingApproval
-            if sessionKnown { state.sessions = ["c": s] }
-            state.activeSessionId = "c"
-            let release = await DemoRequests.enqueuePermission(state, event: try DemoRequests.hookEvent([
-                "hook_event_name": "PermissionRequest", "session_id": "c", "cwd": "/Users/dev/code/api-server",
-                "_source": "codex", "tool_name": "Bash", "tool_input": ["command": "cargo test"],
-            ]))
-            defer { release() }
-            state.refreshDerivedState()
-            state.surface = .approvalCard(sessionId: "c")
-            let panel = try PanelHost(state, notchHeight: 32)
-            defer { panel.close() }
-            panel.settle()
-            return panel.height - (try panel.gapUnderPanel())
-        }
-        let withRow = try await cardHeight(sessionKnown: true)
-        let withoutRow = try await cardHeight(sessionKnown: false)
-        XCTAssertGreaterThan(withRow - withoutRow, 14, "the approval card has no session context row")
     }
 
     // MARK: - Fixtures

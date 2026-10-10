@@ -136,22 +136,4 @@ final class ConfigSymlinkWriteTests: XCTestCase {
         XCTAssertTrue(try String(contentsOfFile: home + "/config.toml", encoding: .utf8).contains("hooks = true"))
     }
 
-    func testAlwaysAllowRuleGoesIntoASymlinkedRulesFile() throws {
-        let home = try makeDir("codex-rules")
-        setenv("CODEX_HOME", home, 1)
-        try fm.createDirectory(atPath: home + "/rules", withIntermediateDirectories: true)
-        let target = try linkToDotfile(home + "/rules/codeisland.rules", named: "codeisland.rules", contents: "")
-        let event = try XCTUnwrap(HookEvent(from: JSONSerialization.data(withJSONObject: [
-            "hook_event_name": "PermissionRequest",
-            "session_id": "s1",
-            "_source": "codex",
-            "tool_name": "Bash",
-            "tool_input": ["command": "npm run build"],
-        ])))
-
-        XCTAssertTrue(CodexPermissionRules().persistAlwaysAllowRule(for: event))
-
-        XCTAssertTrue(isSymlink(home + "/rules/codeisland.rules"))
-        XCTAssertTrue(try String(contentsOfFile: target, encoding: .utf8).contains(#"pattern = ["npm", "run", "build"]"#))
-    }
 }

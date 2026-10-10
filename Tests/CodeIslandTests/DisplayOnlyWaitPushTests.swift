@@ -236,17 +236,16 @@ final class DisplayOnlyWaitPushTests: XCTestCase {
 
     // MARK: - Terminal permission prompt
 
-    /// A `permission_prompt` Notification can arrive a beat before the
-    /// island queues the same request; pushing it would spend the approval's
-    /// dedupe slot on a poorer message. It is only reminded.
-    func testTerminalPermissionPromptIsNotPushedOnArrival() throws {
+    /// A `permission_prompt` Notification blocks the session like its
+    /// PermissionRequest hook does, and is pushed when the wait begins.
+    func testTerminalPermissionPromptIsPushedOnArrival() throws {
         let appState = makeAppState()
         appState.handleEvent(try makeEvent([
             "hook_event_name": "Notification", "session_id": "push-term", "_term_app": "iTerm.app",
             "notification_type": "permission_prompt", "message": "Claude needs your permission to use Bash",
         ]))
         XCTAssertEqual(appState.sessions["push-term"]?.status, .waitingApproval)
-        XCTAssertNil(PushNotifier.shared.lastDecision)
+        XCTAssertEqual(PushNotifier.shared.lastDecision, .sent([.bark]))
     }
 
     // MARK: - Follow-up reminders
@@ -287,10 +286,12 @@ final class DisplayOnlyWaitPushTests: XCTestCase {
             "notification_type": "permission_prompt", "message": "Claude needs your permission to use Bash",
         ]))
 
+        // The prompt itself was pushed on arrival; the reminder is the second.
+        await waitForRequests(1)
         followUpNow = followUpNow.addingTimeInterval(61)
         await followUps.tick(now: followUpNow)
         XCTAssertEqual(PushNotifier.shared.lastDecision, .sent([.bark]))
-        await waitForRequests(1)
+        await waitForRequests(2)
         XCTAssertEqual(
             sentBodies().last?["body"] as? String,
             "\(L10n.shared["push_msg_permission"])\nClaude needs your permission to use Bash\n\(answerIn("iTerm2"))"

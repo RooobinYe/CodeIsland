@@ -341,57 +341,5 @@ final class ZCodeSupportTests: XCTestCase {
         XCTAssertEqual(event.toolUseId, "call-42")
     }
 
-    // MARK: - Always-allow decision shape (#258)
 
-    func testZcodeAlwaysAllowResponseUsesStrictSchemaShape() throws {
-        let data = AppState.zcodeAlwaysAllowResponse(toolName: "Bash")
-        let root = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
-        let output = try XCTUnwrap(root["hookSpecificOutput"] as? [String: Any])
-        XCTAssertEqual(output["hookEventName"] as? String, "PermissionRequest")
-
-        let decision = try XCTUnwrap(output["decision"] as? [String: Any])
-        XCTAssertEqual(decision["behavior"] as? String, "allow")
-        // Claude's key would fail ZCode's strict schema and void the decision.
-        XCTAssertNil(decision["updatedPermissions"])
-
-        let updates = try XCTUnwrap(decision["permissionUpdates"] as? [[String: Any]])
-        let update = try XCTUnwrap(updates.first)
-        XCTAssertEqual(update["type"] as? String, "addRules")
-        XCTAssertEqual(update["behavior"] as? String, "allow")
-        // `destination` does not exist in ZCode's schema.
-        XCTAssertNil(update["destination"])
-
-        let rules = try XCTUnwrap(update["rules"] as? [[String: Any]])
-        let rule = try XCTUnwrap(rules.first)
-        XCTAssertEqual(rule["toolName"] as? String, "Bash")
-        // A bare toolName rule matches every call of the tool; a "*"
-        // ruleContent would be compared against the command text and never match.
-        XCTAssertNil(rule["ruleContent"])
-    }
-
-    func testZcodeAlwaysAllowResponseWithoutToolNameFallsBackToPlainAllow() throws {
-        for toolName in [nil, ""] as [String?] {
-            let data = AppState.zcodeAlwaysAllowResponse(toolName: toolName)
-            let root = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
-            let output = try XCTUnwrap(root["hookSpecificOutput"] as? [String: Any])
-            let decision = try XCTUnwrap(output["decision"] as? [String: Any])
-            XCTAssertEqual(decision["behavior"] as? String, "allow")
-            // An empty toolName can't form a schema-valid rule (min length 1) —
-            // emitting one would void the WHOLE decision upstream.
-            XCTAssertNil(decision["permissionUpdates"])
-        }
-    }
-
-    func testIsZcodeEventDetectsNormalizedSource() throws {
-        let zcodePayload: [String: Any] = [
-            "hookEventName": "PermissionRequest", "sessionId": "s1", "_source": "zcode",
-        ]
-        let claudePayload: [String: Any] = [
-            "hook_event_name": "PermissionRequest", "session_id": "s2", "_source": "claude",
-        ]
-        let zcodeEvent = try XCTUnwrap(HookEvent(from: JSONSerialization.data(withJSONObject: zcodePayload)))
-        let claudeEvent = try XCTUnwrap(HookEvent(from: JSONSerialization.data(withJSONObject: claudePayload)))
-        XCTAssertTrue(AppState.isZcodeEvent(zcodeEvent))
-        XCTAssertFalse(AppState.isZcodeEvent(claudeEvent))
-    }
 }

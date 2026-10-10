@@ -3,10 +3,7 @@ import XCTest
 
 /// Names and tooltips that explain the panel's terse controls.
 final class PanelCopyTests: XCTestCase {
-    private let hintKeys = [
-        "group_all", "group_status", "group_cli",
-        "dismiss_card_hint", "skip_question_hint", "always_hint_session", "always_hint_saved",
-    ]
+    private let hintKeys = ["group_all", "group_status", "group_cli"]
 
     func testEveryLanguageSpellsOutThePanelControls() {
         // zh and zh-Hant are not merged over English like de, so a missing
@@ -35,12 +32,4 @@ final class PanelCopyTests: XCTestCase {
         }
     }
 
-    @MainActor
-    func testAlwaysSaysWhetherTheRuleOutlivesTheSession() {
-        let saved = L10n.shared.language
-        defer { L10n.shared.language = saved }
-        L10n.shared.language = "en"
-        XCTAssertTrue(ApprovalHints.always(savesRule: true).contains("~/.codex/rules"))
-        XCTAssertTrue(ApprovalHints.always(savesRule: false).contains("session"))
-    }
 }

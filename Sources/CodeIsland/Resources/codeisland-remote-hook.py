@@ -14,11 +14,6 @@ REMOTE_HOST_ID = os.environ.get("CODEISLAND_REMOTE_HOST_ID", "")
 REMOTE_HOST_NAME = os.environ.get("CODEISLAND_REMOTE_HOST_NAME", "")
 SOURCE = os.environ.get("CODEISLAND_SOURCE", "")
 TIMEOUT_SECONDS = 300
-# A blocking approval waits on a human, so it must not be capped at the
-# fire-and-forget budget: the hook is registered with an 86400s timeout on the
-# agent side, and a socket timeout of 5 minutes would silently drop the decision
-# of anyone who stepped away (#306).
-BLOCKING_TIMEOUT_SECONDS = 86400
 TRANSCRIPT_TAIL_BYTES = 262144
 
 
@@ -460,20 +455,18 @@ def _read_stdin_json():
         return None
 
 
-def _send_event(payload, expects_response):
+def _send_event(payload):
+    """Fire-and-forget: CodeIsland only displays, so no event waits for a
+    decision and nothing is ever printed back to the agent."""
     sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    sock.settimeout(BLOCKING_TIMEOUT_SECONDS if expects_response else TIMEOUT_SECONDS)
+    sock.settimeout(TIMEOUT_SECONDS)
     try:
         sock.connect(SOCKET_PATH)
         sock.sendall(json.dumps(payload).encode("utf-8"))
         sock.shutdown(socket.SHUT_WR)
-        if expects_response:
-            response = sock.recv(65536)
-            return response.decode("utf-8") if response else None
-        return None
     except (OSError, socket.error):
         # Socket may not exist or server may have shut down — fail silently (#45)
-        return None
+        pass
     finally:
         try:
             sock.close()
@@ -579,29 +572,7 @@ def main():
         if store:
             payload["_hermes_store"] = store
 
-    # Blocking events: permission prompts + question prompts
-    expects_response = normalized_event == "PermissionRequest" or (
-        normalized_event == "Notification" and payload.get("question")
-    )
-    response = _send_event(payload, expects_response)
-    if response:
-        if SOURCE == "google-antigravity" or SOURCE == "gemini":
-            try:
-                res_obj = json.loads(response)
-                behavior = res_obj.get("hookSpecificOutput", {}).get("decision", {}).get("behavior")
-                if behavior in ("allow", "always"):
-                    print(json.dumps({"decision": "allow"}))
-                else:
-                    print(json.dumps({"decision": "deny"}))
-            except Exception:
-                if '"behavior":"allow"' in response or '"behavior":"always"' in response:
-                    print(json.dumps({"decision": "allow"}))
-                elif '"behavior":"deny"' in response:
-                    print(json.dumps({"decision": "deny"}))
-                else:
-                    print(response)
-        else:
-            print(response)
+    _send_event(payload)
     return 0
 
 

@@ -163,7 +163,6 @@ final class AppStateCoworkWatchTests: XCTestCase {
         XCTAssertEqual(card.status, .waitingApproval)
         XCTAssertEqual(card.currentTool, "Bash")
         XCTAssertEqual(card.toolDescription, "Approve Bash in Claude Desktop · rm x")
-        XCTAssertTrue(appState.permissionQueue.isEmpty, "nothing to answer from the island")
     }
 
     func testQuestionShowsTheQuestionText() throws {
@@ -175,7 +174,6 @@ final class AppStateCoworkWatchTests: XCTestCase {
         let card = try XCTUnwrap(appState.sessions[key])
         XCTAssertEqual(card.status, .waitingQuestion)
         XCTAssertEqual(card.toolDescription, "Answer in Claude Desktop: Which folder?")
-        XCTAssertTrue(appState.questionQueue.isEmpty)
     }
 
     // MARK: - Completion

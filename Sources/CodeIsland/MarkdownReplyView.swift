@@ -64,7 +64,7 @@ private struct CompletionReplyView: View {
 }
 
 /// A scroll area that hugs its content and stops growing where the panel
-/// window ends — the completion card's reply, a question card's options.
+/// window ends — the completion card's reply.
 /// Its height is capped by what the window leaves once the rest of the card
 /// is laid out (CompletionReplyMetrics.maxHeight); longer content scrolls
 /// inside it instead of running off the bottom of the window.

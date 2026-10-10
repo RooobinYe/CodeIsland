@@ -19,7 +19,6 @@ final class SoundBehaviourTests: XCTestCase {
         SettingsKey.quietHoursStart,
         SettingsKey.quietHoursEnd,
         SettingsKey.smartSuppress,
-        SettingsKey.autoExpandOnPermission,
     ]
 
     override func setUp() {
@@ -50,64 +49,32 @@ final class SoundBehaviourTests: XCTestCase {
         super.tearDown()
     }
 
-    // MARK: - The burst rule
+    // MARK: - Blocked sessions
 
-    /// The approval chime marks the *start* of a burst. Three approvals queued
-    /// back to back are one interruption, not three chimes.
-    func testABurstOfQueuedApprovalsChimesOnce() async throws {
+    /// The chime marks a session becoming blocked. A replay of the same
+    /// request (or a second one while it still waits) is no new interruption.
+    func testASessionChimesOnceWhenItBecomesBlocked() throws {
         let appState = AppState()
-        var tasks: [Task<Data, Never>] = []
-        for index in 0..<3 {
-            let event = try makePermissionEvent(sessionId: "burst-\(index)")
-            tasks.append(await startHookRequest { appState.handlePermissionRequest(event, continuation: $0) })
-        }
-
-        XCTAssertEqual(appState.permissionQueue.count, 3)
-        XCTAssertEqual(played, ["8bit_approval"], "one burst, one chime")
-
-        for index in 0..<3 { appState.handlePeerDisconnect(sessionId: "burst-\(index)") }
-        for task in tasks { _ = try await awaitValue(of: task) }
-    }
-
-    /// #309's regression, now expressible: a dismissed request stays queued, and
-    /// must not make the next session's approval arrive in silence.
-    func testDismissedRequestDoesNotSwallowTheNextSessionsChime() async throws {
-        let appState = AppState()
-        let first = try makePermissionEvent(sessionId: "snd-dismissed")
-        let firstTask = await startHookRequest { appState.handlePermissionRequest(first, continuation: $0) }
+        appState.handleBlockingRequest(try makePermissionEvent(sessionId: "snd-once"), status: .waitingApproval)
+        appState.handleBlockingRequest(try makePermissionEvent(sessionId: "snd-once"), status: .waitingApproval)
         XCTAssertEqual(played, ["8bit_approval"])
-
-        appState.dismissPermissionPrompt()
-        played = []
-
-        let second = try makePermissionEvent(sessionId: "snd-later")
-        let secondTask = await startHookRequest { appState.handlePermissionRequest(second, continuation: $0) }
-
-        XCTAssertEqual(
-            played,
-            ["8bit_approval"],
-            "the dismissed request is hidden, not in progress — the new one still announces itself"
-        )
-
-        appState.handlePeerDisconnect(sessionId: "snd-dismissed")
-        appState.handlePeerDisconnect(sessionId: "snd-later")
-        _ = try await awaitValue(of: firstTask)
-        _ = try await awaitValue(of: secondTask)
     }
 
-    /// A card that never opens still chimes: with auto-expand off the sound is
-    /// the *only* signal the user gets. (#292)
-    func testAutoExpandOffStillChimes() async throws {
-        UserDefaults.standard.set(false, forKey: SettingsKey.autoExpandOnPermission)
+    func testEachBlockedSessionChimes() throws {
         let appState = AppState()
-        let event = try makePermissionEvent(sessionId: "snd-collapsed")
-        let task = await startHookRequest { appState.handlePermissionRequest(event, continuation: $0) }
+        for index in 0..<2 {
+            appState.handleBlockingRequest(try makePermissionEvent(sessionId: "snd-\(index)"), status: .waitingApproval)
+        }
+        XCTAssertEqual(played, ["8bit_approval", "8bit_approval"])
+    }
 
+    /// Nothing opens for a blocked session: the sound and the collapsed bar's
+    /// bell are the signal.
+    func testBlockedSessionChimesWithoutOpeningAnything() throws {
+        let appState = AppState()
+        appState.handleBlockingRequest(try makePermissionEvent(sessionId: "snd-collapsed"), status: .waitingApproval)
         XCTAssertEqual(appState.surface, .collapsed)
         XCTAssertEqual(played, ["8bit_approval"])
-
-        appState.handlePeerDisconnect(sessionId: "snd-collapsed")
-        _ = try await awaitValue(of: task)
     }
 
     // MARK: - Gates

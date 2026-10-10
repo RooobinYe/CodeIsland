@@ -42,9 +42,7 @@ final class UIGalleryHarness: XCTestCase {
         let sandbox = DefaultsSandbox(keys: GallerySettings.keys)
         XCTAssertGreaterThan(GallerySettings.keys.count, 100, "Settings.swift keys were not found")
         let savedLanguage = L10n.shared.language
-        MascotAnimationGate.shared.setPanelVisible(false)
         defer {
-            MascotAnimationGate.shared.setPanelVisible(true)
             L10n.shared.language = savedLanguage
             sandbox.restore()
             GallerySettings.suite.removePersistentDomain(forName: GallerySettings.suiteName)
@@ -54,8 +52,6 @@ final class UIGalleryHarness: XCTestCase {
             L10n.shared.language = lang.rawValue
             if wants("collapsed") { try await renderCollapsed(lang) }
             if wants("list") { try await renderList(lang) }
-            if wants("approval") { try await renderApprovals(lang) }
-            if wants("question") { try await renderQuestions(lang) }
             if wants("completion") { try await renderCompletion(lang) }
             if wants("settings") { try renderSettings(lang) }
         }
@@ -130,57 +126,6 @@ final class UIGalleryHarness: XCTestCase {
         }
     }
 
-    private func renderApprovals(_ lang: GalleryLang) async throws {
-        // Every card at the default text size and at the largest Content
-        // Font Size (16pt), which the card text follows.
-        for kind in ApprovalKind.allCases {
-            for big in [false, true] {
-                GallerySettings.reset()
-                if big { GallerySettings.set(16, SettingsKey.contentFontSize) }
-                let demo = try await GalleryDemo.approval(kind, lang: lang)
-                defer { demo.release() }
-                try renderOnStage(demo, group: "approval", name: kind.rawValue + (big ? "-f16" : ""), lang: lang,
-                                  screen: .macBook14, layout: StageLayout(width: 700, bottomMargin: 40, menuItems: false))
-            }
-        }
-        // The buttons badge a global shortcut only once it is turned on.
-        for big in [false, true] {
-            GallerySettings.reset()
-            GallerySettings.setCardShortcutsEnabled()
-            if big { GallerySettings.set(16, SettingsKey.contentFontSize) }
-            let demo = try await GalleryDemo.approval(.bashShort, lang: lang)
-            defer { demo.release() }
-            try renderOnStage(demo, group: "approval", name: "bash-short-keys" + (big ? "-f16" : ""), lang: lang,
-                              screen: .macBook14, layout: StageLayout(width: 700, bottomMargin: 40, menuItems: false))
-        }
-        if lang == .en {
-            GallerySettings.reset()
-            let demo = try await GalleryDemo.approval(.bashShort, lang: lang)
-            defer { demo.release() }
-            try renderOnStage(demo, group: "approval", name: "bash-short-light", lang: lang, screen: .macBook14,
-                              layout: StageLayout(width: 700, bottomMargin: 40, menuItems: false), wallpaper: .light)
-        }
-    }
-
-    private func renderQuestions(_ lang: GalleryLang) async throws {
-        for kind in QuestionKind.allCases {
-            for big in [false, true] {
-                GallerySettings.reset()
-                if big { GallerySettings.set(16, SettingsKey.contentFontSize) }
-                let demo = try await GalleryDemo.question(kind, lang: lang)
-                defer { demo.release() }
-                try renderOnStage(demo, group: "question", name: kind.rawValue + (big ? "-f16" : ""), lang: lang,
-                                  screen: .macBook14, layout: StageLayout(width: 700, bottomMargin: 40, menuItems: false))
-            }
-        }
-        GallerySettings.reset()
-        GallerySettings.setCardShortcutsEnabled()
-        let demo = try await GalleryDemo.question(.multi, lang: lang)
-        defer { demo.release() }
-        try renderOnStage(demo, group: "question", name: "multi-keys", lang: lang, screen: .macBook14,
-                          layout: StageLayout(width: 700, bottomMargin: 40, menuItems: false))
-    }
-
     private func renderCompletion(_ lang: GalleryLang) async throws {
         var jobs: [(String, CompletionKind, [(String, Any)])] = [
             ("short", .short, []),
@@ -198,7 +143,7 @@ final class UIGalleryHarness: XCTestCase {
     }
 
     private func renderSettings(_ lang: GalleryLang) throws {
-        let pages: [SettingsPage] = [.general, .behavior, .appearance, .mascots, .sound, .shortcuts, .remote, .hooks, .buddy, .about]
+        let pages: [SettingsPage] = [.general, .behavior, .appearance, .sound, .shortcuts, .remote, .hooks, .about]
         let appearances: [NSAppearance.Name] = lang == .en ? [.darkAqua, .aqua] : [.darkAqua]
         // SettingsWindowController: min(660, w/2) × min(540, h/0.6) on a 14" display.
         let size = CGSize(width: 660, height: 540)
@@ -251,7 +196,6 @@ final class UIGalleryHarness: XCTestCase {
             notchW: screen.notchWidth,
             screenWidth: screen.screenWidth
         )
-        .environment(\.mascotStaticTime, GalleryDemo.mascotTime)
         .defaultAppStorage(GallerySettings.suite)
         .frame(width: screen.windowWidth, height: height)
 
@@ -305,16 +249,6 @@ enum GallerySettings {
         if !suiteOnly { UserDefaults.standard.set(value, forKey: key) }
     }
 
-    /// Turns on the approve / always / deny / skip shortcuts (off by
-    /// default): ⌘⇧A, ⌘⇧L, ⌘⇧D and ⌘⇧S.
-    static func setCardShortcutsEnabled() {
-        let commandShift = Int(NSEvent.ModifierFlags([.command, .shift]).rawValue)
-        for (action, keyCode) in [(ShortcutAction.approve, 0), (.approveAlways, 37), (.deny, 2), (.skipQuestion, 1)] {
-            set(true, SettingsKey.shortcutEnabled(action.rawValue))
-            set(keyCode, SettingsKey.shortcutKeyCode(action.rawValue))
-            set(commandShift, SettingsKey.shortcutModifiers(action.rawValue))
-        }
-    }
 }
 
 // MARK: - Variants
@@ -346,31 +280,8 @@ enum CollapsedState: String, CaseIterable {
     case workingLong = "working-long"
     case approval
     case question
-    case questionDismissed = "question-dismissed"
     case quota
     case glance
-}
-
-enum ApprovalKind: String, CaseIterable {
-    case bashShort = "bash-short"
-    case bashLong = "bash-long"
-    /// Longer than the window holds: the command scrolls.
-    case bashHeredoc = "bash-heredoc"
-    case edit
-    case write
-    case mcp
-    case codex
-    case queued
-}
-
-enum QuestionKind: String, CaseIterable {
-    case single
-    case multi
-    case many
-    case longText = "long-text"
-    case freeText = "free-text"
-    case wizard
-    case legacy
 }
 
 enum CompletionKind {
@@ -388,7 +299,6 @@ struct GalleryDemoState {
 
 @MainActor
 enum GalleryDemo {
-    static let mascotTime: Double = 5.2
 
     enum ID {
         static let claude = "a3e1c0d4-6f2b-4c8e-9b17-52d8e4f07c91"
@@ -579,7 +489,6 @@ enum GalleryDemo {
 
         var claude = claudeWorking(lang)
         var after: (() -> Void)?
-        var release: () -> Void = {}
         switch kind {
         case .empty: break
         case .idle, .quota, .glance:
@@ -598,7 +507,7 @@ enum GalleryDemo {
         case .approval:
             claude.status = .waitingApproval
             claude.currentTool = "Bash"
-        case .question, .questionDismissed:
+        case .question:
             claude.status = .waitingQuestion
             claude.currentTool = nil
         }
@@ -607,23 +516,6 @@ enum GalleryDemo {
         state.refreshDerivedState()
 
         switch kind {
-        case .approval:
-            let event = try DemoRequests.hookEvent([
-                "hook_event_name": "PermissionRequest", "session_id": ID.claude, "cwd": "/Users/dev/code/web-app",
-                "tool_name": "Bash", "tool_input": ["command": "npm run test -- --coverage"],
-            ])
-            release = await DemoRequests.enqueuePermission(state, event: event)
-        case .question, .questionDismissed:
-            release = try await DemoRequests.enqueueQuestion(state, sessionId: ID.claude, cwd: "/Users/dev/code/web-app", items: [
-                (lang.t("Which state library should the dashboard use?", "仪表盘应该用哪个状态管理库？",
-                        "Welche State-Bibliothek soll das Dashboard nutzen?"), nil,
-                 [("Zustand", nil), ("Redux Toolkit", nil)], false),
-            ])
-            if kind == .questionDismissed {
-                state.surface = .questionCard(sessionId: ID.claude)
-                state.dismissQuestion(expectedSessionId: ID.claude)
-            }
-            state.surface = .collapsed
         case .quota:
             applyQuota(state)
         case .glance:
@@ -631,7 +523,7 @@ enum GalleryDemo {
         default: break
         }
         state.refreshDerivedState()
-        return GalleryDemoState(state: state, afterFirstLayout: after, release: release)
+        return GalleryDemoState(state: state, afterFirstLayout: after)
     }
 
     // MARK: Session list
@@ -653,198 +545,10 @@ enum GalleryDemo {
         }
         state.sessions = sessions
         state.activeSessionId = ID.claude
-        var release: () -> Void = {}
-        if sessions[ID.mimo] != nil {
-            let event = try DemoRequests.hookEvent([
-                "hook_event_name": "PermissionRequest", "session_id": ID.mimo, "cwd": "/Users/dev/code/ml-pipeline",
-                "tool_name": "Bash",
-                "tool_input": ["command": "python scripts/backfill.py --month 2026-03",
-                               "description": lang.t("Backfill March features", "回填三月特征", "März-Features nachfüllen")],
-            ])
-            release = await DemoRequests.enqueuePermission(state, event: event)
-        }
         if quota { applyQuota(state) }
         state.refreshDerivedState()
         state.surface = .sessionList
-        return GalleryDemoState(state: state, release: release)
-    }
-
-    // MARK: Approval cards
-
-    static func approval(_ kind: ApprovalKind, lang: GalleryLang) async throws -> GalleryDemoState {
-        let state = AppState()
-        state.claudeUsage = usage()
-        var claude = claudeWorking(lang)
-        claude.status = .waitingApproval
-        var sid = ID.claude
-        var cwd = "/Users/dev/code/web-app"
-        var source = "claude"
-        var tool = "Bash"
-        var input: [String: Any] = [:]
-        switch kind {
-        case .bashShort, .queued:
-            input = ["command": "npm run test -- --coverage",
-                     "description": lang.t("Run the test suite with a coverage report", "运行测试套件并生成覆盖率报告",
-                                           "Testsuite mit Coverage-Bericht ausführen")]
-        case .bashLong:
-            input = ["command": """
-                docker compose -f docker-compose.yml -f docker-compose.ci.yml run --rm \\
-                  -e DATABASE_URL=postgres://ci:ci@db:5432/app_test \\
-                  -e REDIS_URL=redis://cache:6379/1 \\
-                  api bash -lc 'bundle exec rails db:prepare && bundle exec rspec spec/requests --format documentation --fail-fast'
-                """,
-                     "description": lang.t("Run the request specs against a disposable CI database",
-                                           "在一次性 CI 数据库上运行请求测试",
-                                           "Request-Specs gegen eine Wegwerf-CI-Datenbank ausführen")]
-        case .bashHeredoc:
-            input = ["command": "psql \"$DATABASE_URL\" <<'SQL'\n" + (1...60).map {
-                "INSERT INTO orders (id, status, total) VALUES (\($0), 'pending', \($0 * 7 % 90 + 10).00);"
-            }.joined(separator: "\n") + "\nSQL",
-                     "description": lang.t("Seed the orders table for the dashboard demo", "为仪表盘演示写入订单种子数据",
-                                           "Bestelltabelle für die Dashboard-Demo befüllen")]
-        case .edit:
-            tool = "Edit"
-            input = ["file_path": "/Users/dev/code/web-app/src/components/Dashboard.tsx",
-                     "old_string": "const [orders, setOrders] = useState<Order[]>([]);",
-                     "new_string": "const [orders, setOrders] = useState<Order[]>([]);\nconst [filters, setFilters] = useState<OrderFilters>(defaultFilters);"]
-        case .write:
-            tool = "Write"
-            input = ["file_path": "/Users/dev/code/web-app/src/components/FilterBar.tsx",
-                     "content": "import { DateRangePicker } from './DateRangePicker';\n\nexport function FilterBar({ value, onChange }: Props) {\n  return (\n    <div className=\"filter-bar\">\n      <DateRangePicker value={value.range} onChange={…} />\n"]
-        case .mcp:
-            tool = "mcp__github__create_pull_request"
-            input = ["owner": "acme", "repo": "web-app", "title": lang.t("Dashboard filters", "仪表盘筛选", "Dashboard-Filter"),
-                     "head": "feat/dashboard", "base": "main",
-                     "body": lang.t("Adds a date-range and status filter bar above the orders table.",
-                                    "在订单表格上方新增日期范围和状态筛选栏。",
-                                    "Fügt über der Bestelltabelle eine Filterleiste für Zeitraum und Status hinzu.")]
-        case .codex:
-            sid = ID.codex
-            cwd = "/Users/dev/code/api-server"
-            source = "codex"
-            input = ["command": "cargo test -p planner -- --nocapture"]
-        }
-        var sessions = [ID.claude: claude]
-        if kind == .codex {
-            var codex = codexWorking(lang)
-            codex.status = .waitingApproval
-            sessions = [ID.codex: codex]
-        }
-        if kind == .queued {
-            var codex = codexWorking(lang)
-            codex.status = .waitingApproval
-            var mimo = mimoApproval(lang)
-            mimo.status = .waitingApproval
-            sessions[ID.codex] = codex
-            sessions[ID.mimo] = mimo
-        }
-        state.sessions = sessions
-        state.activeSessionId = sid
-        var payload: [String: Any] = [
-            "hook_event_name": "PermissionRequest", "session_id": sid, "cwd": cwd,
-            "tool_name": tool, "tool_input": input,
-        ]
-        if source != "claude" { payload["_source"] = source }
-        var releases = [await DemoRequests.enqueuePermission(state, event: try DemoRequests.hookEvent(payload))]
-        if kind == .queued {
-            releases.append(await DemoRequests.enqueuePermission(state, event: try DemoRequests.hookEvent([
-                "hook_event_name": "PermissionRequest", "session_id": ID.codex, "cwd": "/Users/dev/code/api-server",
-                "_source": "codex", "tool_name": "Bash", "tool_input": ["command": "cargo bench -p planner"],
-            ])))
-            releases.append(await DemoRequests.enqueuePermission(state, event: try DemoRequests.hookEvent([
-                "hook_event_name": "PermissionRequest", "session_id": ID.mimo, "cwd": "/Users/dev/code/ml-pipeline",
-                "tool_name": "Bash", "tool_input": ["command": "python scripts/backfill.py --month 2026-03"],
-            ])))
-        }
-        state.refreshDerivedState()
-        state.surface = .approvalCard(sessionId: sid)
-        return GalleryDemoState(state: state) { releases.forEach { $0() } }
-    }
-
-    // MARK: Question cards
-
-    static func question(_ kind: QuestionKind, lang: GalleryLang) async throws -> GalleryDemoState {
-        let state = AppState()
-        state.claudeUsage = usage()
-        var claude = claudeWorking(lang)
-        claude.status = .waitingQuestion
-        claude.currentTool = nil
-        state.sessions = [ID.claude: claude]
-        state.activeSessionId = ID.claude
-        let cwd = "/Users/dev/code/web-app"
-        let stateLibs: [(String, String?)] = [
-            (lang.t("Zustand (Recommended)", "Zustand（推荐）", "Zustand (empfohlen)"),
-             lang.t("Tiny hook-based store with almost no boilerplate", "轻量的 Hook 式 store，几乎零样板代码",
-                    "Winziger Hook-basierter Store fast ohne Boilerplate")),
-            ("Redux Toolkit", lang.t("Structured slices, DevTools and RTK Query built in", "结构化 slice，自带 DevTools 与 RTK Query",
-                                     "Strukturierte Slices, DevTools und RTK Query inklusive")),
-            ("React Context", lang.t("Built into React; fine for state that rarely changes", "React 内置方案，适合不常变化的状态",
-                                     "In React eingebaut; gut für selten geänderten State")),
-        ]
-        let release: () -> Void
-        switch kind {
-        case .single:
-            release = try await DemoRequests.enqueueQuestion(state, sessionId: ID.claude, cwd: cwd, items: [
-                (lang.t("Which state library should the dashboard use?", "仪表盘应该用哪个状态管理库？",
-                        "Welche State-Bibliothek soll das Dashboard nutzen?"),
-                 lang.t("State", "状态管理", "State"), stateLibs, false),
-            ])
-        case .multi:
-            release = try await DemoRequests.enqueueQuestion(state, sessionId: ID.claude, cwd: cwd, items: [
-                (lang.t("Which filters should the first version ship with?", "第一版要包含哪些筛选项？",
-                        "Mit welchen Filtern soll die erste Version starten?"),
-                 lang.t("Filters", "筛选", "Filter"), [
-                    (lang.t("Date range", "日期范围", "Zeitraum"), lang.t("Presets plus a custom range", "预设区间加自定义", "Vorgaben plus eigener Zeitraum")),
-                    (lang.t("Order status", "订单状态", "Bestellstatus"), nil),
-                    (lang.t("Customer", "客户", "Kunde"), lang.t("Type-ahead search", "输入联想搜索", "Suche mit Vorschlägen")),
-                    (lang.t("Amount", "金额", "Betrag"), nil),
-                 ], true),
-            ])
-        case .many:
-            let regions = ["us-east-1", "us-east-2", "us-west-1", "us-west-2", "eu-west-1", "eu-central-1",
-                           "ap-northeast-1", "ap-southeast-1", "ap-southeast-2", "sa-east-1"]
-            release = try await DemoRequests.enqueueQuestion(state, sessionId: ID.claude, cwd: cwd, items: [
-                (lang.t("Which region should the staging stack deploy to?", "预发环境部署到哪个区域？",
-                        "In welche Region soll der Staging-Stack deployt werden?"),
-                 lang.t("Region", "区域", "Region"),
-                 regions.map { ($0, lang.t("Latency to the team: medium", "团队访问延迟：中等", "Latenz zum Team: mittel")) }, false),
-            ])
-        case .longText:
-            release = try await DemoRequests.enqueueQuestion(state, sessionId: ID.claude, cwd: cwd, items: [
-                (lang.t(
-                    "The orders table is rendered by both the legacy jQuery grid (used by the admin export page) and the new React table. Adding filters to both means duplicating the query-building logic, while moving the export page to the React table first would delay this change by about a day. Which approach should I take?",
-                    "订单表格同时由旧的 jQuery 表格（管理后台导出页在用）和新的 React 表格渲染。两边都加筛选意味着要复制一份查询构建逻辑；而先把导出页迁到 React 表格，会让这次改动推迟大约一天。我该选哪种方案？",
-                    "Die Bestelltabelle wird sowohl vom alten jQuery-Grid (Export-Seite im Admin-Bereich) als auch von der neuen React-Tabelle gerendert. Filter in beiden bedeuten doppelte Abfragelogik; die Export-Seite zuerst auf die React-Tabelle umzustellen, verzögert diese Änderung um etwa einen Tag. Welchen Weg soll ich nehmen?"),
-                 lang.t("Approach", "方案", "Vorgehen"), [
-                    (lang.t("Duplicate the logic for now", "暂时复制逻辑", "Logik vorerst duplizieren"), nil),
-                    (lang.t("Migrate the export page first", "先迁移导出页", "Zuerst die Export-Seite migrieren"), nil),
-                 ], false),
-            ])
-        case .freeText:
-            release = try await DemoRequests.enqueueQuestion(state, sessionId: ID.claude, cwd: cwd, items: [
-                (lang.t("What should the default date range be?", "默认的日期范围应该是多少？", "Welcher Zeitraum soll standardmäßig gelten?"),
-                 nil, [], false),
-            ])
-        case .wizard:
-            release = try await DemoRequests.enqueueQuestion(state, sessionId: ID.claude, cwd: cwd, items: [
-                (lang.t("Which state library should the dashboard use?", "仪表盘应该用哪个状态管理库？",
-                        "Welche State-Bibliothek soll das Dashboard nutzen?"),
-                 lang.t("State", "状态管理", "State"), stateLibs, false),
-                (lang.t("Persist filters where?", "筛选状态保存在哪里？", "Wo sollen Filter gespeichert werden?"),
-                 lang.t("Storage", "存储", "Speicher"), [("URL", nil), ("localStorage", nil)], false),
-            ])
-        case .legacy:
-            let event = try DemoRequests.hookEvent([
-                "hook_event_name": "Notification", "session_id": ID.claude, "cwd": cwd,
-                "message": "Claude needs your input",
-            ])
-            release = await DemoRequests.enqueueQuestion(state, event: event, payload: QuestionPayload(
-                question: lang.t("Claude needs your input to continue", "Claude 需要你的输入才能继续", "Claude braucht deine Eingabe, um fortzufahren"),
-                options: nil, descriptions: nil, header: nil), askState: nil)
-        }
-        state.refreshDerivedState()
-        state.surface = .questionCard(sessionId: ID.claude)
-        return GalleryDemoState(state: state, release: release)
+        return GalleryDemoState(state: state)
     }
 
     // MARK: Completion card

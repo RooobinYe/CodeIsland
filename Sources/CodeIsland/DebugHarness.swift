@@ -9,8 +9,8 @@ import CodeIslandCore
 //
 // Scenarios:
 //   working     — single session actively running tools
-//   approval    — session waiting for permission
-//   question    — session with pending question
+//   approval    — session blocked on a permission prompt
+//   question    — session blocked on a question
 //   completion  — session just finished
 //   multi       — 3 sessions in mixed states
 //   busy        — heavy workload with subagents
@@ -126,7 +126,7 @@ enum DebugHarness {
 
         state.sessions["preview-approval"] = s
         state.activeSessionId = "preview-approval"
-        state.surface = .approvalCard(sessionId: "preview-approval")
+        state.surface = .sessionList
     }
 
     private static func applyQuestion(to state: AppState) {
@@ -140,18 +140,7 @@ enum DebugHarness {
 
         state.sessions["preview-question"] = s
         state.activeSessionId = "preview-question"
-
-        // Inject a mock question payload for UI preview
-        state.previewQuestionPayload = QuestionPayload(
-            question: "Which approach do you prefer?",
-            options: ["Extract service class", "Use middleware pattern", "Inline helpers"],
-            descriptions: [
-                "Create a dedicated AuthService class with dependency injection",
-                "Add Express-style middleware for auth checks",
-                "Keep auth logic inline with helper functions"
-            ]
-        )
-        state.surface = .questionCard(sessionId: "preview-question")
+        state.surface = .sessionList
     }
 
     private static func applyCompletion(to state: AppState) {
@@ -521,7 +510,7 @@ enum DebugHarness {
         state.sessions["preview-allcli-7"] = s7
         state.sessions["preview-allcli-8"] = s8
         state.activeSessionId = "preview-allcli-1"
-        state.surface = .approvalCard(sessionId: "preview-allcli-5")
+        state.surface = .sessionList
     }
 
     // MARK: - Idle (no sessions)

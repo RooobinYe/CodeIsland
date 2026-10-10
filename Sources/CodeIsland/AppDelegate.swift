@@ -55,7 +55,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         // Watch system sleep/wake so the mascot animations pause and re-anchor
         // their periodic schedules instead of pinning a core after wake (#225).
-        MascotAnimationGate.shared.start()
         // Lock / screen saver / display sleep → event sounds hold off.
         SceneMuteMonitor.shared.start()
         // Back at the screen: follow-ups held back meanwhile go out now.
@@ -79,51 +78,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         appState.startAiWorkWatcher()
         appState.startCoworkWatcher()
         RemoteManager.shared.startup()
-
-        // Buddy bridge (opt-in): mirrors the Dynamic Island onto the companion
-        // device and routes its button press back to TerminalActivator.
-        ESP32StatePublisher.shared.attach(appState)
-        ESP32BridgeManager.shared.onFocusRequest = { [weak appState] mascot in
-            guard let appState else { return }
-            ESP32FocusCoordinator.handle(mascot: mascot, appState: appState)
-        }
-        ESP32BridgeManager.shared.onControlCommand = { [weak appState] command in
-            guard let appState else { return }
-            // The hardware Buddy shows whatever is featured and has no session
-            // id on the wire, so it keeps acting on the head of the queue.
-            appState.handleBuddyControlCommand(command)
-        }
-        AppleCompanionPublisher.shared.attach(appState)
-        AppleCompanionPublisher.shared.onFocusRequest = { [weak appState] mascot in
-            guard let appState else { return }
-            ESP32FocusCoordinator.handle(mascot: mascot, appState: appState)
-        }
-        AppleCompanionPublisher.shared.onControlCommand = { [weak appState] command, sessionId in
-            guard let appState else { return }
-            appState.handleBuddyControlCommand(command, expectedSessionId: sessionId)
-        }
-        AppleCompanionPublisher.shared.onQuestionAnswer = { [weak appState] answer, sessionId in
-            guard let appState else { return }
-            appState.answerCompanionQuestion(answer, expectedSessionId: sessionId)
-        }
-        let buddyEnabled = UserDefaults.standard.bool(forKey: SettingsKey.esp32BridgeEnabled)
-        let buddySyncInterval = UserDefaults.standard.double(forKey: SettingsKey.esp32HeartbeatSeconds)
-        let buddyBrightness = UserDefaults.standard.double(forKey: SettingsKey.buddyScreenBrightnessPercent)
-        let buddyScreenOrientation = BuddyScreenOrientation(
-            settingsValue: UserDefaults.standard.string(forKey: SettingsKey.buddyScreenOrientation)
-        )
-        ESP32StatePublisher.shared.configure(
-            enabled: buddyEnabled,
-            heartbeatSeconds: buddySyncInterval > 0 ? buddySyncInterval : SettingsDefaults.esp32HeartbeatSeconds,
-            brightnessPercent: buddyBrightness > 0 ? buddyBrightness : SettingsDefaults.buddyScreenBrightnessPercent,
-            screenOrientation: buddyScreenOrientation
-        )
-        let appleCompanionEnabled = UserDefaults.standard.bool(forKey: SettingsKey.appleCompanionEnabled)
-        let appleCompanionHeartbeat = UserDefaults.standard.double(forKey: SettingsKey.appleCompanionHeartbeatSeconds)
-        AppleCompanionPublisher.shared.configure(
-            enabled: appleCompanionEnabled,
-            heartbeatSeconds: appleCompanionHeartbeat > 0 ? appleCompanionHeartbeat : SettingsDefaults.appleCompanionHeartbeatSeconds
-        )
 
         // Hooks auto-recovery: periodic + app activation trigger
         hookRecoveryTimer = Timer.scheduledTimer(withTimeInterval: 300, repeats: true) { [weak self] _ in
@@ -158,11 +112,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
         #endif
-
-        // Sparkle runs scheduled checks itself on the cadence declared in
-        // Info.plist (SUScheduledCheckInterval). Start the updater once — it
-        // no-ops for Homebrew-installed builds (brew owns those upgrades).
-        UpdateChecker.shared.start()
 
         // The jingle confirms a launch the user just made; at login it is
         // noise on every boot for everyone with Launch at Login on.
@@ -261,10 +210,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                     }
                 }
             }
-        // Card shortcuts act only on the card on screen (#308); with the
-        // request hidden they open its card instead of acting unseen.
-        case .approve, .approveAlways, .deny, .skipQuestion:
-            appState.performCardShortcut(action)
         case .jumpToTerminal:
             if let id = appState.activeSessionId, let session = appState.sessions[id] {
                 TerminalActivator.activate(session: session, sessionId: id)

@@ -102,8 +102,7 @@ class HookServer {
                 // Safety: reject oversized payloads
                 if data.count > Self.maxPayloadSize {
                     log.warning("Payload too large (\(data.count) bytes), dropping connection")
-                    let denyResponse = Data(#"{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decision":{"behavior":"deny"}}}"#.utf8)
-                    self.sendResponse(connection: connection, data: denyResponse)
+                    self.sendResponse(connection: connection, data: Data("{}".utf8))
                     return
                 }
 
@@ -117,31 +116,6 @@ class HookServer {
     }
 
     /// Internal tools that are safe to auto-approve without user confirmation.
-    /// Read from user settings; defaults to all known internal tools.
-    private static var autoApproveTools: Set<String> {
-        SettingsManager.shared.autoApproveTools
-    }
-
-    /// Whether this event's agent is on the user's always-proceed list (#283).
-    /// Matched on both the raw `_source` and its normalized form so "agy",
-    /// "google-antigravity" and "antigravity-cli" all resolve to one entry.
-    static func isAutoApprovedSource(_ event: HookEvent) -> Bool {
-        isAutoApprovedSource(event, approved: SettingsManager.shared.autoApproveSources)
-    }
-
-    nonisolated static func isAutoApprovedSource(
-        _ event: HookEvent,
-        approved: Set<String>
-    ) -> Bool {
-        guard !approved.isEmpty,
-              let raw = event.rawJSON["_source"] as? String else { return false }
-        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        guard !trimmed.isEmpty else { return false }
-        if approved.contains(trimmed) { return true }
-        guard let normalized = SessionSnapshot.normalizedSupportedSource(trimmed) else { return false }
-        return approved.contains(normalized)
-    }
-
     /// User-configured cwd substring blocklist for plugin/background hooks (e.g. claude-mem).
     /// Empty default = no filtering. Trimmed, blank entries skipped.
     private static func eventMatchesExcludedCwd(_ cwd: String) -> Bool {
@@ -268,19 +242,6 @@ class HookServer {
         }.resume()
     }
 
-    private static func hiddenPluginResponse(for raw: [String: Any]) -> Data {
-        // Hidden PermissionRequest must allow so the plugin's tool execution
-        // doesn't block waiting on a UI prompt the user said to suppress.
-        let eventName = (raw["hook_event_name"] as? String
-            ?? raw["hookEventName"] as? String
-            ?? raw["event_name"] as? String
-            ?? "").lowercased()
-        if eventName.contains("permission") {
-            return Data(#"{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decision":{"behavior":"allow"}}}"#.utf8)
-        }
-        return Data("{}".utf8)
-    }
-
     private static func pluginPpid(from raw: [String: Any]) -> Int? {
         CursorSubsessionRouter.positivePpid(from: raw)
     }
@@ -304,10 +265,7 @@ class HookServer {
 
     static func routeKind(for event: HookEvent) -> RouteKind {
         let normalizedEventName = EventNormalizer.normalize(event.eventName)
-        // Google Antigravity's PreToolUse stays a plain activity event. Its hook
-        // cannot approve a call (an `allow` is ignored and Antigravity prompts
-        // anyway), so an island card in front of it only doubled every approval
-        // and left a card behind when the user answered in Antigravity. The
+        // Google Antigravity's PreToolUse stays a plain activity event: the
         // bridge has already told Antigravity to decide for itself (#339).
         if normalizedEventName == "PermissionRequest" {
             return .permission
@@ -515,7 +473,7 @@ class HookServer {
             return nil
         }
         if mode == "hide" {
-            return (data, Self.hiddenPluginResponse(for: raw))
+            return (data, Data("{}".utf8))
         }
         return applyCursorMerge(
             data: data,
@@ -580,7 +538,7 @@ class HookServer {
                 return routed
             }
         case .hide:
-            return (data, Self.hiddenPluginResponse(for: raw))
+            return (data, Data("{}".utf8))
         case .merge(let parentSessionId, let childSessionId):
             // Transcript parent UUID may differ from the AppState session key.
             let resolvedParent = appState.findSessionId(providerSessionId: parentSessionId)
@@ -600,7 +558,7 @@ class HookServer {
         if (raw["_via_plugin"] as? Bool) == true {
             switch mode {
             case "hide":
-                return (data, Self.hiddenPluginResponse(for: raw))
+                return (data, Data("{}".utf8))
             case "merge":
                 if let source = raw["_source"] as? String,
                    let ppid = Self.pluginPpid(from: raw),
@@ -628,14 +586,7 @@ class HookServer {
 
         switch mode {
         case "hide":
-            // Hiding the card must not approve what Codex's auto reviewer
-            // would otherwise judge (#165): hand it back undecided instead.
-            if Self.rawEventName(from: raw).map(EventNormalizer.normalize) == "PermissionRequest",
-               let event = HookEvent(from: data),
-               Self.shouldDeferPermissionRequestToProvider(event) {
-                return (data, Data("{}".utf8))
-            }
-            return (data, Self.hiddenPluginResponse(for: raw))
+            return (data, Data("{}".utf8))
         case "merge":
             guard let parentSessionId else { return (data, nil) }
             var rewritten = raw
@@ -745,127 +696,24 @@ class HookServer {
         // permission/question UI. Disabled by default. (#115)
         Self.forwardEventToWebhook(event)
 
+        // The island only displays: a request that would block on the user
+        // marks the session as blocked and returns undecided at once, so the
+        // agent asks in its own UI.
         switch Self.routeKind(for: event) {
         case .permission:
-            let sessionId = event.sessionId ?? "default"
-
-            // Auto-approve safe internal tools without showing UI
-            if let toolName = event.toolName, Self.autoApproveTools.contains(toolName) {
-                let response = #"{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decision":{"behavior":"allow"}}}"#
-                sendResponse(connection: connection, data: Data(response.utf8))
-                return
+            if !Self.shouldDeferPermissionRequestToProvider(event) {
+                let status: AgentStatus = event.toolName == "AskUserQuestion" ? .waitingQuestion : .waitingApproval
+                appState.handleBlockingRequest(event, status: status)
             }
-
-            // Agents the user has already put in an always-proceed mode
-            // (Antigravity Turbo, Cursor YOLO, …). Re-asking on the island is the
-            // exact interruption that mode exists to remove (#283). Questions are
-            // not permissions, so AskUserQuestion is deliberately excluded below.
-            if event.toolName != "AskUserQuestion",
-               Self.isAutoApprovedSource(event) {
-                let response = #"{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decision":{"behavior":"allow"}}}"#
-                sendResponse(connection: connection, data: Data(response.utf8))
-                return
-            }
-
-            // AskUserQuestion is a question, not a permission — route to QuestionBar
-            if event.toolName == "AskUserQuestion" {
-                monitorPeerDisconnect(connection: connection, sessionId: sessionId, agentId: event.agentId)
-                Task {
-                    let responseBody = await withCheckedContinuation { continuation in
-                        appState.handleAskUserQuestion(event, continuation: continuation)
-                    }
-                    self.sendResponse(connection: connection, data: responseBody)
-                }
-                return
-            }
-
-            if Self.shouldDeferPermissionRequestToProvider(event) {
-                sendResponse(connection: connection, data: Data("{}".utf8))
-                return
-            }
-
-            monitorPeerDisconnect(connection: connection, sessionId: sessionId, agentId: event.agentId)
-            Task {
-                let responseBody = await withCheckedContinuation { continuation in
-                    appState.handlePermissionRequest(event, continuation: continuation)
-                }
-                self.sendResponse(connection: connection, data: responseBody)
-            }
-
         case .question:
-            let questionSessionId = event.sessionId ?? "default"
-            monitorPeerDisconnect(connection: connection, sessionId: questionSessionId, agentId: event.agentId)
-            Task {
-                let responseBody = await withCheckedContinuation { continuation in
-                    appState.handleQuestion(event, continuation: continuation)
-                }
-                self.sendResponse(connection: connection, data: responseBody)
-            }
-
+            appState.handleBlockingRequest(event, status: .waitingQuestion)
         case .event:
             appState.handleEvent(event)
-            sendResponse(connection: connection, data: Data("{}".utf8))
         }
-    }
-
-    /// Per-connection state used by the disconnect monitor.
-    /// `responded` flips to true once we've sent the response, so our own
-    /// `connection.cancel()` inside `sendResponse` does not masquerade as a
-    /// peer disconnect.
-    private final class ConnectionContext {
-        var responded: Bool = false
-    }
-
-    private var connectionContexts: [ObjectIdentifier: ConnectionContext] = [:]
-
-    /// Watch for bridge process disconnect — indicates the bridge process actually died
-    /// (e.g. user Ctrl-C'd Claude Code), NOT a normal half-close.
-    ///
-    /// Previously this used `connection.receive(min:1, max:1)` which triggered on EOF.
-    /// But the bridge always does `shutdown(SHUT_WR)` after sending the request (see
-    /// CodeIslandBridge/main.swift), which produces an immediate EOF on the read side.
-    /// That caused every PermissionRequest to be auto-drained as `deny` before the UI
-    /// card was even visible. We now rely on `stateUpdateHandler` transitioning to
-    /// `cancelled`/`failed` — which only happens on real socket teardown, not half-close.
-    private func monitorPeerDisconnect(connection: NWConnection, sessionId: String, agentId: String?) {
-        let context = ConnectionContext()
-        let connId = ObjectIdentifier(connection)
-        connectionContexts[connId] = context
-
-        connection.stateUpdateHandler = { [weak self] state in
-            Task { @MainActor in
-                guard let self = self else { return }
-                switch state {
-                case .cancelled, .failed:
-                    if !context.responded {
-                        self.appState.handlePeerDisconnect(sessionId: sessionId, agentId: agentId)
-                    }
-                    self.connectionContexts.removeValue(forKey: connId)
-                default:
-                    break
-                }
-            }
-        }
-
-        // Safety net: if the connection context is still around after 5 minutes
-        // (e.g. stuck continuation, NWConnection never transitions), clean it up.
-        Task { @MainActor [weak self] in
-            try? await Task.sleep(nanoseconds: 300_000_000_000)  // 5 minutes
-            guard let self = self else { return }
-            if self.connectionContexts.removeValue(forKey: connId) != nil {
-                log.warning("Connection context for session \(sessionId) timed out — cleaning up")
-                if !context.responded {
-                    connection.cancel()
-                }
-            }
-        }
+        sendResponse(connection: connection, data: Data("{}".utf8))
     }
 
     private func sendResponse(connection: NWConnection, data: Data) {
-        // Mark as responded BEFORE cancel() so the disconnect monitor ignores our own teardown.
-        if let context = connectionContexts[ObjectIdentifier(connection)] {
-            context.responded = true
-        }
         connection.send(content: data, completion: .contentProcessed { _ in
             connection.cancel()
         })

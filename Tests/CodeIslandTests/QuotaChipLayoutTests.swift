@@ -140,8 +140,6 @@ final class QuotaChipLayoutTests: XCTestCase {
         suite.set(true, forKey: SettingsKey.showClaudeQuota)
         suite.set(mode.rawValue, forKey: SettingsKey.claudeQuotaChip)
         suite.set(toolStatus, forKey: SettingsKey.showToolStatus)
-        MascotAnimationGate.shared.setPanelVisible(false)
-        defer { MascotAnimationGate.shared.setPanelVisible(true) }
 
         let state = AppState()
         var session = SessionSnapshot()
@@ -161,7 +159,6 @@ final class QuotaChipLayoutTests: XCTestCase {
 
         let windowWidth: CGFloat = 620, height: CGFloat = 64
         let view = NotchPanelView(appState: state, hasNotch: true, notchHeight: 32, notchW: notch, screenWidth: 1512)
-            .environment(\.mascotStaticTime, 5.2)
             .defaultAppStorage(suite)
             .background(Color(red: 1, green: 0, blue: 0))
         let host = NSHostingView(rootView: view)

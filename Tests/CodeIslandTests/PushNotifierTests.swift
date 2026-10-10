@@ -107,6 +107,15 @@ final class PushNotifierTests: XCTestCase {
     }
 
     /// Delivery runs in a Task; give it a moment on the main actor.
+    private var onMac: String { L10n.shared["push_msg_answer_on_mac"] }
+
+    /// Answered in the agent: its next tool event ends the wait.
+    private func resolve(_ appState: AppState, _ sessionId: String) throws {
+        appState.handleEvent(try makeEvent([
+            "hook_event_name": "PostToolUse", "session_id": sessionId, "tool_name": "Bash",
+        ]))
+    }
+
     private func waitForRequests(_ count: Int) async {
         for _ in 0..<200 where transport.requests.count < count {
             try? await Task.sleep(nanoseconds: 5_000_000)
@@ -129,7 +138,7 @@ final class PushNotifierTests: XCTestCase {
             "tool_name": "Bash",
             "tool_input": ["command": "git push origin main"],
         ])
-        let response = await startHookRequest { appState.handlePermissionRequest(event, continuation: $0) }
+        appState.handleBlockingRequest(event, status: .waitingApproval)
 
         XCTAssertEqual(PushNotifier.shared.lastDecision, .sent([.bark]))
         await waitForRequests(1)
@@ -137,12 +146,11 @@ final class PushNotifierTests: XCTestCase {
         XCTAssertEqual(transport.requests.first?.url.absoluteString, "https://api.day.app/push")
         XCTAssertEqual(body["title"] as? String, "🔐 Claude · push-project")
         XCTAssertEqual(body["subtitle"] as? String, "\(L10n.shared["push_msg_permission"]): Bash")
-        XCTAssertEqual(body["body"] as? String, "git push origin main")
+        XCTAssertEqual(body["body"] as? String, "git push origin main\n\(onMac)")
         XCTAssertEqual(body["level"] as? String, "timeSensitive")
         XCTAssertEqual(PushNotifier.shared.lastDelivery[.bark]?.result.ok, true)
 
-        appState.approvePermission(expectedSessionId: "push-perm")
-        _ = try await awaitValue(of: response)
+        try resolve(appState, "push-perm")
     }
 
     func testNothingIsPushedWhileThePersonIsAtTheMac() async throws {
@@ -154,24 +162,23 @@ final class PushNotifierTests: XCTestCase {
             "tool_name": "Bash",
             "tool_input": ["command": "ls"],
         ])
-        let response = await startHookRequest { appState.handlePermissionRequest(event, continuation: $0) }
+        appState.handleBlockingRequest(event, status: .waitingApproval)
 
         XCTAssertEqual(PushNotifier.shared.lastDecision, .skipped(.userPresent))
-        appState.denyPermission(expectedSessionId: "push-present")
-        _ = try await awaitValue(of: response)
+        try resolve(appState, "push-present")
         XCTAssertTrue(transport.requests.isEmpty)
     }
 
     // MARK: Catch-up of held-back requests
 
-    private func queuePermission(_ appState: AppState, session: String, command: String) async throws -> Task<Data, Never> {
+    private func queuePermission(_ appState: AppState, session: String, command: String) throws {
         let event = try makeEvent([
             "hook_event_name": "PermissionRequest",
             "session_id": session,
             "tool_name": "Bash",
             "tool_input": ["command": command],
         ])
-        return await startHookRequest { appState.handlePermissionRequest(event, continuation: $0) }
+        appState.handleBlockingRequest(event, status: .waitingApproval)
     }
 
     /// Walked off without locking: the approval that arrives 30 s later is
@@ -179,7 +186,7 @@ final class PushNotifierTests: XCTestCase {
     func testApprovalHeldBackWhilePresentIsPushedWhenTheScreenLocks() async throws {
         presence = PushPresenceSnapshot(idleSeconds: 30)
         let appState = AppState()
-        let response = try await queuePermission(appState, session: "push-held", command: "make deploy")
+        try queuePermission(appState, session: "push-held", command: "make deploy")
         XCTAssertEqual(PushNotifier.shared.lastDecision, .skipped(.userPresent))
         XCTAssertTrue(PushNotifier.shared.hasHeldBackRequests)
         XCTAssertNotNil(PushNotifier.shared.catchUpWakeDate, "one idle timer while something is held back")
@@ -188,7 +195,7 @@ final class PushNotifierTests: XCTestCase {
         PushNotifier.shared.userLeft()
         XCTAssertEqual(PushNotifier.shared.lastDecision, .sent([.bark]))
         await waitForRequests(1)
-        XCTAssertEqual(sentBodies().first?["body"] as? String, "make deploy")
+        XCTAssertEqual(sentBodies().first?["body"] as? String, "make deploy\n\(onMac)")
         XCTAssertFalse(PushNotifier.shared.hasHeldBackRequests)
         XCTAssertNil(PushNotifier.shared.catchUpWakeDate)
 
@@ -197,8 +204,7 @@ final class PushNotifierTests: XCTestCase {
         try? await Task.sleep(nanoseconds: 30_000_000)
         XCTAssertEqual(transport.requests.count, 1)
 
-        appState.denyPermission(expectedSessionId: "push-held")
-        _ = try await awaitValue(of: response)
+        try resolve(appState, "push-held")
     }
 
     /// No lock: the timer looks when idle time could reach the threshold,
@@ -209,7 +215,7 @@ final class PushNotifierTests: XCTestCase {
         presence = PushPresenceSnapshot(idleSeconds: 20)
         let threshold = PushNotifier.shared.idleThreshold
         let appState = AppState()
-        let response = try await queuePermission(appState, session: "push-idle", command: "rm -rf dist")
+        try queuePermission(appState, session: "push-idle", command: "rm -rf dist")
         XCTAssertEqual(PushNotifier.shared.lastDecision, .skipped(.userPresent))
         XCTAssertEqual(PushNotifier.shared.catchUpWakeDate, start.addingTimeInterval(threshold - 20 + 1))
 
@@ -224,20 +230,18 @@ final class PushNotifierTests: XCTestCase {
         XCTAssertNil(PushNotifier.shared.catchUpWakeDate)
         await waitForRequests(1)
 
-        appState.denyPermission(expectedSessionId: "push-idle")
-        _ = try await awaitValue(of: response)
+        try resolve(appState, "push-idle")
     }
 
     /// Answered at the Mac: out of the set, the timer goes, nothing is sent.
     func testAnsweredHeldBackRequestIsDroppedWithItsTimer() async throws {
         presence = PushPresenceSnapshot(idleSeconds: 5)
         let appState = AppState()
-        let response = try await queuePermission(appState, session: "push-answered", command: "ls")
+        try queuePermission(appState, session: "push-answered", command: "ls")
         XCTAssertTrue(PushNotifier.shared.hasHeldBackRequests)
 
-        appState.approvePermission(expectedSessionId: "push-answered")
-        _ = try await awaitValue(of: response)
-        // Dropped once the queue change settles, on a later main-actor turn.
+        try resolve(appState, "push-answered")
+        // Dropped once the wait ends, on a later main-actor turn.
         await waitUntil("the answered request stays held back") { !PushNotifier.shared.hasHeldBackRequests }
         XCTAssertNil(PushNotifier.shared.catchUpWakeDate)
 
@@ -262,11 +266,10 @@ final class PushNotifierTests: XCTestCase {
         XCTAssertNil(PushNotifier.shared.catchUpWakeDate)
 
         defaults.set(false, forKey: SettingsKey.pushEnabled)
-        let response = try await queuePermission(appState, session: "push-held-off", command: "ls")
+        try queuePermission(appState, session: "push-held-off", command: "ls")
         XCTAssertFalse(PushNotifier.shared.hasHeldBackRequests)
         XCTAssertNil(PushNotifier.shared.catchUpWakeDate)
-        appState.denyPermission(expectedSessionId: "push-held-off")
-        _ = try await awaitValue(of: response)
+        try resolve(appState, "push-held-off")
     }
 
     func testDisabledPushNeverDecidesAnything() async throws {
@@ -278,44 +281,10 @@ final class PushNotifierTests: XCTestCase {
             "tool_name": "Bash",
             "tool_input": ["command": "ls"],
         ])
-        let response = await startHookRequest { appState.handlePermissionRequest(event, continuation: $0) }
+        appState.handleBlockingRequest(event, status: .waitingApproval)
         XCTAssertNil(PushNotifier.shared.lastDecision)
-        appState.denyPermission(expectedSessionId: "push-off")
-        _ = try await awaitValue(of: response)
+        try resolve(appState, "push-off")
         XCTAssertTrue(transport.requests.isEmpty)
-    }
-
-    /// Each approval is its own push; only a replay of the same request
-    /// (same tool call id) is one.
-    func testEachApprovalOfASessionPushesOnce() async throws {
-        let appState = AppState()
-        var responses: [Task<Data, Never>] = []
-        for (index, command) in ["ls", "pwd"].enumerated() {
-            let event = try makeEvent([
-                "hook_event_name": "PermissionRequest",
-                "session_id": "push-burst",
-                "tool_name": "Bash",
-                "tool_use_id": "tool-\(index)",
-                "tool_input": ["command": command],
-            ])
-            responses.append(await startHookRequest { appState.handlePermissionRequest(event, continuation: $0) })
-            XCTAssertEqual(PushNotifier.shared.lastDecision, .sent([.bark]), command)
-        }
-        await waitForRequests(2)
-        XCTAssertEqual(sentBodies().compactMap { $0["body"] as? String }, ["ls", "pwd"])
-
-        // The hook bridge replays the first request: same id, same push.
-        PushNotifier.shared.notify(
-            AppState.pushContent(forPermission: appState.permissionQueue[0].event, cwd: nil),
-            subject: appState.pushSubject(for: "push-burst"),
-            request: appState.pushRequest(forPermission: appState.permissionQueue[0].event, sessionId: "push-burst")
-        )
-        XCTAssertEqual(PushNotifier.shared.lastDecision, .skipped(.duplicate))
-
-        appState.denyPermission(expectedSessionId: "push-burst")
-        appState.denyPermission(expectedSessionId: "push-burst")
-        for response in responses { _ = try await awaitValue(of: response) }
-        XCTAssertEqual(transport.requests.count, 2)
     }
 
     /// Answered on the iPhone, and the agent asks again 40 s later — even
@@ -328,18 +297,16 @@ final class PushNotifierTests: XCTestCase {
             "tool_name": "Bash",
             "tool_input": ["command": "npm test"],
         ])
-        let first = await startHookRequest { appState.handlePermissionRequest(event, continuation: $0) }
+        appState.handleBlockingRequest(event, status: .waitingApproval)
         XCTAssertEqual(PushNotifier.shared.lastDecision, .sent([.bark]))
-        appState.approvePermission(expectedSessionId: "push-again")
-        _ = try await awaitValue(of: first)
-        // The answered request frees its slot once the queue change settles.
+        try resolve(appState, "push-again")
+        // The answered request frees its slot once the wait ends.
         PushNotifier.shared.forgetAnsweredRequests()
 
-        let second = await startHookRequest { appState.handlePermissionRequest(event, continuation: $0) }
+        appState.handleBlockingRequest(event, status: .waitingApproval)
         XCTAssertEqual(PushNotifier.shared.lastDecision, .sent([.bark]), "a new request, not a repeat")
         await waitForRequests(2)
-        appState.denyPermission(expectedSessionId: "push-again")
-        _ = try await awaitValue(of: second)
+        try resolve(appState, "push-again")
     }
 
     /// A team chat added with default settings hears that an approval is
@@ -361,18 +328,17 @@ final class PushNotifierTests: XCTestCase {
             "tool_name": "Bash",
             "tool_input": ["command": "cat > deploy.key <<EOF\nPRIVATE KEY BODY\nEOF"],
         ])
-        let response = await startHookRequest { appState.handlePermissionRequest(event, continuation: $0) }
+        appState.handleBlockingRequest(event, status: .waitingApproval)
         XCTAssertEqual(PushNotifier.shared.lastDecision, .sent([.bark, .dingtalk]))
         await waitForRequests(2)
 
         let barkBody = try XCTUnwrap(transport.requests.first { $0.url.host == "api.day.app" }?.jsonBody)
-        XCTAssertEqual(barkBody["body"] as? String, "cat > deploy.key <<EOF …")
+        XCTAssertEqual(barkBody["body"] as? String, "cat > deploy.key <<EOF …\n\(onMac)")
         let dingBody = try XCTUnwrap(transport.requests.first { $0.url.host == "oapi.dingtalk.com" }?.jsonBody)
         let content = try XCTUnwrap((dingBody["text"] as? [String: Any])?["content"] as? String)
-        XCTAssertEqual(content, "🔐 Claude · push-team\n\(L10n.shared["push_msg_permission"]): Bash\n\(PushRequestBuilder.keywordFooter)")
+        XCTAssertEqual(content, "🔐 Claude · push-team\n\(L10n.shared["push_msg_permission"]): Bash\n\(onMac)\n\(PushRequestBuilder.keywordFooter)")
 
-        appState.denyPermission(expectedSessionId: "push-team")
-        _ = try await awaitValue(of: response)
+        try resolve(appState, "push-team")
     }
 
     func testChannelEventFilterIsHonoured() async throws {
@@ -384,10 +350,9 @@ final class PushNotifierTests: XCTestCase {
             "tool_name": "Bash",
             "tool_input": ["command": "ls"],
         ])
-        let response = await startHookRequest { appState.handlePermissionRequest(event, continuation: $0) }
+        appState.handleBlockingRequest(event, status: .waitingApproval)
         XCTAssertEqual(PushNotifier.shared.lastDecision, .skipped(.noChannel))
-        appState.denyPermission(expectedSessionId: "push-filtered")
-        _ = try await awaitValue(of: response)
+        try resolve(appState, "push-filtered")
     }
 
     // MARK: Questions
@@ -410,56 +375,14 @@ final class PushNotifierTests: XCTestCase {
                 ]],
             ],
         ])
-        let response = await startHookRequest { appState.handleAskUserQuestion(event, continuation: $0) }
+        appState.handleBlockingRequest(event, status: .waitingQuestion)
         await waitForRequests(1)
 
         let body = try XCTUnwrap(sentBodies().first)
         XCTAssertEqual(body["subtitle"] as? String, L10n.shared["push_msg_question"])
-        XCTAssertEqual(body["body"] as? String, "Which database?\n1. Postgres\n2. SQLite")
+        XCTAssertEqual(body["body"] as? String, "Which database?\n1. Postgres\n2. SQLite\n\(onMac)")
 
-        appState.skipQuestion(expectedSessionId: "push-ask")
-        _ = try await awaitValue(of: response)
-    }
-
-    /// With "auto-expand on question" off the card waits behind a badge —
-    /// that is no reason to keep the question off the phone. Only Smart
-    /// Suppress (its terminal in front) is.
-    func testAskUserQuestionPushIgnoresTheAutoExpandSwitch() async throws {
-        let savedAutoExpand = UserDefaults.standard.object(forKey: SettingsKey.autoExpandOnQuestion)
-        defer {
-            if let savedAutoExpand {
-                UserDefaults.standard.set(savedAutoExpand, forKey: SettingsKey.autoExpandOnQuestion)
-            } else {
-                UserDefaults.standard.removeObject(forKey: SettingsKey.autoExpandOnQuestion)
-            }
-        }
-        UserDefaults.standard.set(false, forKey: SettingsKey.autoExpandOnQuestion)
-        defaults.set(false, forKey: SettingsKey.pushOnlyWhenAway)
-        presence = PushPresenceSnapshot(idleSeconds: 3)
-
-        let appState = AppState()
-        appState.questionTerminalFrontmostDetector = { _ in false }
-        func ask(_ session: String) async throws -> Task<Data, Never> {
-            let event = try makeEvent([
-                "hook_event_name": "PermissionRequest",
-                "session_id": session,
-                "_term_app": "iTerm.app",
-                "tool_name": "AskUserQuestion",
-                "tool_input": ["questions": [["question": "Which database?", "header": "DB", "options": [["label": "Postgres"]]]]],
-            ])
-            return await startHookRequest { appState.handleAskUserQuestion(event, continuation: $0) }
-        }
-        let first = try await ask("push-ask-badge")
-        XCTAssertEqual(PushNotifier.shared.lastDecision, .sent([.bark]))
-        appState.skipQuestion(expectedSessionId: "push-ask-badge")
-        _ = try await awaitValue(of: first)
-
-        UserDefaults.standard.set(true, forKey: SettingsKey.smartSuppress)
-        appState.questionTerminalFrontmostDetector = { _ in true }
-        let second = try await ask("push-ask-terminal")
-        XCTAssertEqual(PushNotifier.shared.lastDecision, .skipped(.smartSuppressed))
-        appState.skipQuestion(expectedSessionId: "push-ask-terminal")
-        _ = try await awaitValue(of: second)
+        try resolve(appState, "push-ask")
     }
 
     // MARK: Completion and errors
@@ -610,7 +533,7 @@ final class PushNotifierTests: XCTestCase {
             "tool_name": "Bash",
             "tool_input": ["command": "make deploy"],
         ])
-        let response = await startHookRequest { appState.handlePermissionRequest(event, continuation: $0) }
+        appState.handleBlockingRequest(event, status: .waitingApproval)
         await waitForRequests(1)
 
         followUpNow = followUpNow.addingTimeInterval(61)
@@ -620,11 +543,10 @@ final class PushNotifierTests: XCTestCase {
         let reminder = try XCTUnwrap(sentBodies().last)
         XCTAssertEqual(reminder["title"] as? String, "⏰ Claude")
         XCTAssertEqual(reminder["subtitle"] as? String, "\(L10n.shared["push_msg_reminder"]) · \(String(format: L10n.shared["push_msg_waiting_minutes"], 1))")
-        XCTAssertEqual(reminder["body"] as? String, "\(L10n.shared["push_msg_permission"]): Bash\nmake deploy")
+        XCTAssertEqual(reminder["body"] as? String, "\(L10n.shared["push_msg_permission"]): Bash\nmake deploy\n\(onMac)")
         XCTAssertEqual(reminder["level"] as? String, "timeSensitive")
 
-        appState.denyPermission(expectedSessionId: "push-remind")
-        _ = try await awaitValue(of: response)
+        try resolve(appState, "push-remind")
     }
 
     func testCatchUpAndAnsweredRemindersAreNotPushed() {

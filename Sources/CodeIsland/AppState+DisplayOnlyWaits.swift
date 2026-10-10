@@ -1,38 +1,29 @@
 import Foundation
 import CodeIslandCore
 
-/// Display-only waits (`DisplayOnlyWait`): an agent blocked on the user
-/// somewhere the island cannot answer — a Claude Desktop Cowork card, Cursor's
-/// in-IDE question, an AiWork prompt, a terminal permission prompt, a Codex
-/// Desktop thread flag. The session card already shows them; this makes them
-/// follow-up reminders and phone pushes like a queued approval / question.
+/// Display-only waits (`DisplayOnlyWait`): an agent blocked on the user — a
+/// terminal permission prompt, an AskUserQuestion, a Claude Desktop Cowork
+/// card, Cursor's in-IDE question, an AiWork prompt, a Codex Desktop thread
+/// flag. The island never answers any of them: the session card shows the
+/// wait, follow-up reminders and phone pushes announce it, and the user
+/// answers in the agent itself.
 ///
 /// Every path that can move a session into or out of such a wait reads
 /// `displayOnlyWaitKind(forSession:)` before its change and reports with
 /// `noteDisplayOnlyWait` after it; only a real transition does any work, so
 /// the hot paths (hook events, transcript deltas, AiWork tokens) pay two
-/// dictionary reads. A wait that begins restarts its reminders and, from a
-/// live source the island can never own, pushes once; updates while it
-/// continues push nothing.
+/// dictionary reads. A wait that begins restarts its reminders and, when
+/// announced, pushes once; updates while it continues push nothing.
 extension AppState {
-    /// The kind this session is display-only waiting on right now, or nil.
+    /// The kind this session is waiting on right now, or nil.
     func displayOnlyWaitKind(forSession sessionId: String) -> FollowUpReminderKind? {
-        guard let status = sessions[sessionId]?.status,
-              status == .waitingApproval || status == .waitingQuestion else { return nil }
-        return DisplayOnlyWait.kind(status: status, islandHoldsRequest: islandHoldsRequest(forSession: sessionId))
+        guard let status = sessions[sessionId]?.status else { return nil }
+        return DisplayOnlyWait.kind(status: status)
     }
 
-    /// Sessions display-only waiting on `kind`, for the follow-up scheduler.
+    /// Sessions waiting on `kind`, for the follow-up scheduler.
     func displayOnlyWaitingSessionIds(kind: FollowUpReminderKind) -> Set<String> {
-        let held = Set(permissionQueue.map { $0.event.sessionId ?? "default" })
-            .union(questionQueue.map { $0.event.sessionId ?? "default" })
-        return DisplayOnlyWait.sessionIds(waitingOn: kind, in: sessions, islandRequestSessionIds: held)
-    }
-
-    /// Queued — dismissed or not — means the island owns the wait.
-    private func islandHoldsRequest(forSession sessionId: String) -> Bool {
-        permissionQueue.contains { ($0.event.sessionId ?? "default") == sessionId }
-            || questionQueue.contains { ($0.event.sessionId ?? "default") == sessionId }
+        DisplayOnlyWait.sessionIds(waitingOn: kind, in: sessions)
     }
 
     /// Report a change that may have moved a session into or out of a
@@ -42,12 +33,8 @@ extension AppState {
     /// - `asking`: what the wait asks, when the source knows more than the
     ///   session card does (the Cowork card on top, the AiWork event). nil
     ///   keeps what a continuing wait already recorded.
-    /// - `announce`: a live wait from a source the island can never own
-    ///   (Cowork, Cursor's in-IDE question, AiWork) pushes when it begins.
-    ///   Launch rebuilds and backfills only remind; so do sources whose
-    ///   request the island may be about to queue — a terminal
-    ///   `permission_prompt` races its own PermissionRequest hook, and a push
-    ///   from it would take the dedupe slot of the richer queued push.
+    /// - `announce`: a live wait pushes when it begins. Launch rebuilds and
+    ///   backfills only remind.
     func noteDisplayOnlyWait(
         sessionId: String,
         was before: FollowUpReminderKind?,
@@ -79,9 +66,8 @@ extension AppState {
 
     // MARK: - Push
 
-    /// The first push for a display-only wait. Same gates as a queued
-    /// approval: only while away, Smart Suppress while present, dedupe, rate
-    /// limit, per-channel kind filter.
+    /// The first push for a display-only wait: only while away, Smart
+    /// Suppress while present, dedupe, rate limit, per-channel kind filter.
     @discardableResult
     func pushDisplayOnlyWait(sessionId: String) -> PushDecision {
         let notifier = PushNotifier.shared

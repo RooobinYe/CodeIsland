@@ -9,12 +9,10 @@ enum SettingsPage: String, Identifiable, Hashable {
     case general
     case behavior
     case appearance
-    case mascots
     case sound
     case shortcuts
     case remote
     case hooks
-    case buddy
     case about
 
     var id: String { rawValue }
@@ -24,12 +22,10 @@ enum SettingsPage: String, Identifiable, Hashable {
         case .general: return "gearshape.fill"
         case .behavior: return "slider.horizontal.3"
         case .appearance: return "paintbrush.fill"
-        case .mascots: return "person.2.fill"
         case .sound: return "speaker.wave.2.fill"
         case .shortcuts: return "command.circle.fill"
         case .remote: return "network"
         case .hooks: return "link.circle.fill"
-        case .buddy: return "dot.radiowaves.left.and.right"
         case .about: return "info.circle.fill"
         }
     }
@@ -39,12 +35,10 @@ enum SettingsPage: String, Identifiable, Hashable {
         case .general: return .gray
         case .behavior: return .orange
         case .appearance: return .blue
-        case .mascots: return .pink
         case .sound: return .green
         case .shortcuts: return .indigo
         case .remote: return .mint
         case .hooks: return .purple
-        case .buddy: return .red
         case .about: return .cyan
         }
     }
@@ -56,8 +50,8 @@ private struct SidebarGroup: Hashable {
 }
 
 private let sidebarGroups: [SidebarGroup] = [
-    SidebarGroup(title: nil, pages: [.general, .behavior, .appearance, .mascots, .sound, .shortcuts]),
-    SidebarGroup(title: "CodeIsland", pages: [.remote, .hooks, .buddy, .about]),
+    SidebarGroup(title: nil, pages: [.general, .behavior, .appearance, .sound, .shortcuts]),
+    SidebarGroup(title: "CodeIsland", pages: [.remote, .hooks, .about]),
 ]
 
 // MARK: - Main View
@@ -98,12 +92,10 @@ struct SettingsView: View {
                 case .general: GeneralPage()
                 case .behavior: BehaviorPage(appState: appState)
                 case .appearance: AppearancePage()
-                case .mascots: MascotsPage()
                 case .sound: SoundPage()
                 case .shortcuts: ShortcutsPage()
                 case .remote: RemoteHostsPage()
                 case .hooks: HooksPage(appState: appState)
-                case .buddy: BuddyPage()
                 case .about: AboutPage()
                 }
             }
@@ -393,7 +385,6 @@ private struct BehaviorPage: View {
     @AppStorage(SettingsKey.smartSuppress) private var smartSuppress = SettingsDefaults.smartSuppress
     @AppStorage(SettingsKey.collapseOnMouseLeave) private var collapseOnMouseLeave = SettingsDefaults.collapseOnMouseLeave
     @AppStorage(SettingsKey.autoCollapseAfterSessionJump) private var autoCollapseAfterSessionJump = SettingsDefaults.autoCollapseAfterSessionJump
-    @AppStorage(SettingsKey.autoExpandOnPermission) private var autoExpandOnPermission = SettingsDefaults.autoExpandOnPermission
     @AppStorage(SettingsKey.followUpReminderMinutes) private var followUpReminderMinutes = SettingsDefaults.followUpReminderMinutes
     // Seeded through the migration shim so a legacy autoExpandOnCompletion=false
     // shows up as "off" here; writes go to the new key via onChange.
@@ -402,12 +393,9 @@ private struct BehaviorPage: View {
     @AppStorage(SettingsKey.hapticOnHover) private var hapticOnHover = SettingsDefaults.hapticOnHover
     @AppStorage(SettingsKey.hapticIntensity) private var hapticIntensity = SettingsDefaults.hapticIntensity
     @AppStorage(SettingsKey.hoverExpandDelay) private var hoverExpandDelay = SettingsDefaults.hoverExpandDelay
-    @AppStorage(SettingsKey.autoExpandOnQuestion) private var autoExpandOnQuestion = SettingsDefaults.autoExpandOnQuestion
     @AppStorage(SettingsKey.sessionTimeout) private var sessionTimeout = SettingsDefaults.sessionTimeout
     @AppStorage(SettingsKey.rotationInterval) private var rotationInterval = SettingsDefaults.rotationInterval
     @AppStorage(SettingsKey.maxToolHistory) private var maxToolHistory = SettingsDefaults.maxToolHistory
-    @AppStorage(SettingsKey.autoApproveTools) private var autoApproveRaw: String = SettingsDefaults.autoApproveTools
-    @AppStorage(SettingsKey.autoApproveSources) private var autoApproveSources: String = SettingsDefaults.autoApproveSources
     @AppStorage(SettingsKey.excludedHookCwdSubstrings) private var excludedHookCwdSubstrings: String = SettingsDefaults.excludedHookCwdSubstrings
     @AppStorage(SettingsKey.claudeConfigDir) private var claudeConfigDir: String = SettingsDefaults.claudeConfigDir
     @AppStorage(SettingsKey.webhookEnabled) private var webhookEnabled: Bool = SettingsDefaults.webhookEnabled
@@ -421,17 +409,6 @@ private struct BehaviorPage: View {
                 guard pluginSessionMode != newMode else { return }
                 pluginSessionMode = newMode
                 appState?.applyCurrentPluginSessionMode()
-            }
-        )
-    }
-
-    private func autoApproveBinding(for name: String) -> Binding<Bool> {
-        Binding(
-            get: { autoApproveRaw.split(separator: ",").contains(Substring(name)) },
-            set: { isOn in
-                var set = Set(autoApproveRaw.split(separator: ",").map(String.init))
-                if isOn { set.insert(name) } else { set.remove(name) }
-                autoApproveRaw = set.sorted().joined(separator: ",")
             }
         )
     }
@@ -455,18 +432,6 @@ private struct BehaviorPage: View {
                     title: l10n["smart_suppress"],
                     desc: l10n["smart_suppress_desc"],
                     isOn: $smartSuppress,
-                    animation: .smartSuppress
-                )
-                BehaviorToggleRow(
-                    title: l10n["auto_expand_on_permission"],
-                    desc: l10n["auto_expand_on_permission_desc"],
-                    isOn: $autoExpandOnPermission,
-                    animation: .smartSuppress
-                )
-                BehaviorToggleRow(
-                    title: l10n["auto_expand_on_question"],
-                    desc: l10n["auto_expand_on_question_desc"],
-                    isOn: $autoExpandOnQuestion,
                     animation: .smartSuppress
                 )
                 BehaviorToggleRow(
@@ -549,37 +514,6 @@ private struct BehaviorPage: View {
                     }
                     .pickerStyle(.segmented)
                     .padding(.leading, 84)
-                }
-            }
-
-            Section(l10n["auto_approve_tools"]) {
-                Text(l10n["auto_approve_tools_desc"])
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                ForEach(SettingsManager.allAutoApproveTools, id: \.name) { tool in
-                    Toggle(isOn: autoApproveBinding(for: tool.name)) {
-                        VStack(alignment: .leading, spacing: 1) {
-                            Text(tool.name)
-                                .font(.system(size: 12, design: .monospaced))
-                            Text(l10n["auto_approve_\(tool.name)"])
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-                }
-                Divider()
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(l10n["auto_approve_sources"])
-                        .font(.system(size: 12, weight: .medium))
-                    Text(l10n["auto_approve_sources_desc"])
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    TextField(
-                        l10n["auto_approve_sources_placeholder"],
-                        text: $autoApproveSources
-                    )
-                    .textFieldStyle(.roundedBorder)
-                    .font(.system(size: 12, design: .monospaced))
                 }
             }
 
@@ -1529,7 +1463,7 @@ private struct AppearancePreview: View {
         HStack(alignment: .top, spacing: 10) {
             // Column 1: Mascot
             VStack(spacing: 3) {
-                MascotView(source: "claude", status: .running, size: 32)
+                MascotView(source: "claude", size: 32)
                 if showDetails {
                     HStack(spacing: 1) {
                         MiniAgentIcon(active: true, size: 8)
@@ -1589,7 +1523,7 @@ private struct AppearancePreview: View {
     /// One row per session (Compact).
     private var compactRow: some View {
         HStack(spacing: 8) {
-            MascotView(source: "claude", status: .running, size: 18)
+            MascotView(source: "claude", size: 18)
                 .frame(width: 22)
             Text("my-project")
                 .font(.system(size: fs, weight: .bold, design: .monospaced))
@@ -1624,137 +1558,6 @@ private struct AppearancePreview: View {
             .scaleEffect(scale)
             .frame(width: SessionGlyph.columnWidth(fs))
             .accessibilityHidden(true)
-    }
-}
-
-// MARK: - Mascots Page
-
-private struct MascotsPage: View {
-    @ObservedObject private var l10n = L10n.shared
-    @State private var previewStatus: AgentStatus = .processing
-    @AppStorage(SettingsKey.mascotSpeed) private var mascotSpeed = SettingsDefaults.mascotSpeed
-    @AppStorage(SettingsKey.defaultSource) private var defaultSource = SettingsDefaults.defaultSource
-
-    private let mascotList: [(name: String, source: String, desc: String, color: Color)] = [
-        ("Clawd", "claude", "Claude Code", Color(red: 0.871, green: 0.533, blue: 0.427)),
-        ("Dex", "codex", "Codex (OpenAI)", Color(red: 0.92, green: 0.92, blue: 0.93)),
-        ("Grok", "grok", "Grok CLI", Color.white),
-        ("Gemini", "gemini", "Gemini CLI", Color(red: 0.278, green: 0.588, blue: 0.894)),
-        ("CursorBot", "cursor", "Cursor", Color(red: 0.96, green: 0.31, blue: 0.0)),
-        ("TraeBot", "trae", "Trae", Color(red: 0.96, green: 0.31, blue: 0.0)),
-        ("TraeCNBot", "traecn", "Trae CN", Color(red: 0.96, green: 0.31, blue: 0.0)),
-        ("CopilotBot", "copilot", "GitHub Copilot", Color(red: 0.35, green: 0.75, blue: 0.95)),
-        ("QoderBot", "qoder", "Qoder", Color(red: 0.165, green: 0.859, blue: 0.361)),
-        ("QoderBot", "qoderwork", "QoderWork", Color(red: 0.165, green: 0.859, blue: 0.361)),
-        ("Droid", "droid", "Factory", Color(red: 0.835, green: 0.416, blue: 0.149)),
-        ("Buddy", "codebuddy", "CodeBuddy", Color(red: 0.424, green: 0.302, blue: 1.0)),
-        ("BuddyCN", "codybuddycn", "CodyBuddyCN", Color(red: 0.424, green: 0.302, blue: 1.0)),
-        ("StepFun", "stepfun", "StepFun", Color(red: 0.424, green: 0.302, blue: 1.0)),
-        ("AntiGravity", "antigravity", "AntiGravity", Color(red: 0.424, green: 0.302, blue: 1.0)),
-        ("WorkBuddy", "workbuddy", "WorkBuddy", Color(red: 0.475, green: 0.380, blue: 0.870)),
-        ("Hermes", "hermes", "Hermes", Color(red: 0.424, green: 0.302, blue: 1.0)),
-        ("Molty", "openclaw", "OpenClaw", Color(red: 0.93, green: 0.36, blue: 0.24)),
-        ("QwenBot", "qwen", "Qwen Code", Color(red: 0.486, green: 0.228, blue: 0.929)),
-        ("KimiBot", "kimi", "Kimi Code CLI", Color(red: 0.29, green: 0.56, blue: 1.0)),
-        ("Kiro", "kiro", "Kiro", Color(red: 0.62, green: 0.45, blue: 1.0)),
-        ("MiniMax", "minimax", "MiniMax Code CLI", Color(red: 1.0, green: 0.36, blue: 0.30)),
-        ("Pi", "pi", "Pi", Color(red: 0.55, green: 0.43, blue: 0.95)),
-        ("Oh My Pi", "omp", "Oh My Pi", Color(red: 0.55, green: 0.43, blue: 0.95)),
-        ("OpBot", "opencode", "OpenCode", Color(red: 0.55, green: 0.55, blue: 0.57)),
-        ("MiMoBot", "mimo", "MiMo Code / Xiaomi MiMo", Color(red: 1.0, green: 0.41, blue: 0.0)),
-        ("ClineBot", "cline", "Cline", Color(red: 0.00, green: 0.70, blue: 0.49)),
-        ("Gemini", "google-antigravity", "Google Antigravity", Color(red: 0.278, green: 0.588, blue: 0.894)),
-        ("AiWorkBot", "aiwork", "AiWork", Color(red: 0.12, green: 0.72, blue: 0.28)),
-        ("AiWorkBot", "aiwork-cli", "AiWork CLI", Color(red: 0.12, green: 0.55, blue: 0.90)),
-    ]
-
-    var body: some View {
-        Form {
-            Section {
-                Picker(l10n["preview_status"], selection: $previewStatus) {
-                    Text(l10n["processing"]).tag(AgentStatus.processing)
-                    Text(l10n["idle"]).tag(AgentStatus.idle)
-                    Text(l10n["waiting_approval"]).tag(AgentStatus.waitingApproval)
-                }
-                .pickerStyle(.segmented)
-
-                HStack {
-                    Text(l10n["mascot_speed"])
-                    Spacer()
-                    Text(mascotSpeed == 0
-                         ? l10n["speed_off"]
-                         : String(format: "%.1f×", Double(mascotSpeed) / 100.0))
-                        .foregroundStyle(.secondary)
-                        .monospacedDigit()
-                }
-                Slider(value: Binding(
-                    get: { Double(mascotSpeed) },
-                    set: { mascotSpeed = Int($0) }
-                ), in: 0...300, step: 25)
-
-                Picker(selection: $defaultSource) {
-                    ForEach(mascotList, id: \.source) { mascot in
-                        Text(mascot.desc).tag(mascot.source)
-                    }
-                } label: {
-                    Text(l10n["default_mascot"])
-                    Text(l10n["default_mascot_desc"])
-                }
-                .onChange(of: defaultSource) { _, _ in
-                    ESP32StatePublisher.shared.notifyDirty()
-                }
-            }
-
-            Section {
-                ForEach(mascotList, id: \.source) { mascot in
-                    MascotRow(
-                        name: mascot.name,
-                        source: mascot.source,
-                        desc: mascot.desc,
-                        color: mascot.color,
-                        status: previewStatus
-                    )
-                }
-            }
-        }
-        .formStyle(.grouped)
-    }
-}
-
-private struct MascotRow: View {
-    let name: String
-    let source: String
-    let desc: String
-    let color: Color
-    let status: AgentStatus
-
-    var body: some View {
-        HStack(spacing: 16) {
-            ZStack {
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .fill(Color.black)
-                    .frame(width: 56, height: 56)
-                MascotView(source: source, status: status, size: 40)
-            }
-
-            VStack(alignment: .leading, spacing: 4) {
-                HStack(spacing: 6) {
-                    Text(name)
-                        .font(.system(size: 14, weight: .bold, design: .monospaced))
-                    if let icon = cliIcon(source: source, size: 16) {
-                        Image(nsImage: icon)
-                            .resizable()
-                            .frame(width: 16, height: 16)
-                    }
-                }
-                Text(desc)
-                    .font(.system(size: 12))
-                    .foregroundStyle(.secondary)
-            }
-
-            Spacer()
-        }
-        .padding(.vertical, 4)
     }
 }
 
@@ -1959,379 +1762,10 @@ private struct SoundEventRow: View {
     }
 }
 
-// MARK: - Buddy Page
-
-private struct BuddyPage: View {
-    @ObservedObject private var l10n = L10n.shared
-    @AppStorage(SettingsKey.esp32BridgeEnabled) private var enabled: Bool = SettingsDefaults.esp32BridgeEnabled
-    @AppStorage(SettingsKey.esp32HeartbeatSeconds) private var heartbeat: Double = SettingsDefaults.esp32HeartbeatSeconds
-    @AppStorage(SettingsKey.buddyScreenBrightnessPercent) private var brightness: Double = SettingsDefaults.buddyScreenBrightnessPercent
-    @AppStorage(SettingsKey.buddyScreenOrientation) private var screenOrientation: String = SettingsDefaults.buddyScreenOrientation
-    @AppStorage(SettingsKey.appleCompanionEnabled) private var appleCompanionEnabled: Bool = SettingsDefaults.appleCompanionEnabled
-    @AppStorage(SettingsKey.appleCompanionHeartbeatSeconds) private var appleCompanionHeartbeat: Double = SettingsDefaults.appleCompanionHeartbeatSeconds
-    @ObservedObject private var appleCompanion = AppleCompanionPublisher.shared
-    @State private var refreshTick = 0
-
-    private var bridge: ESP32BridgeManager { ESP32BridgeManager.shared }
-
-    private var localizedPowerError: String {
-        switch bridge.lastError {
-        case "Bluetooth permission denied":
-            return l10n["buddy_status_bluetooth_denied"]
-        case "Bluetooth unsupported on this Mac":
-            return l10n["buddy_status_bluetooth_unsupported"]
-        case "Bluetooth is resetting":
-            return l10n["buddy_status_bluetooth_resetting"]
-        default:
-            return l10n["buddy_status_bluetooth_off"]
-        }
-    }
-
-    private var statusText: String {
-        _ = refreshTick // force recompute
-        switch bridge.status {
-        case .off: return l10n["buddy_status_disabled"]
-        case .poweredOff: return localizedPowerError
-        case .noSelection: return l10n["buddy_status_no_selection"]
-        case .scanning: return l10n["buddy_status_scanning"]
-        case .searchingSelected: return l10n["buddy_status_searching_selected"]
-        case .connecting: return l10n["buddy_status_connecting"]
-        case .pairing: return l10n["buddy_status_pairing"]
-        case .pairWaitingConfirm: return l10n["buddy_status_pair_waiting_confirm"]
-        case .pairRejected: return l10n["buddy_status_pair_rejected"]
-        case .connected: return l10n["buddy_status_connected"]
-        case .reconnecting(let s): return String(format: l10n["buddy_status_reconnecting"], s)
-        }
-    }
-
-    private var statusColor: Color {
-        _ = refreshTick
-        switch bridge.status {
-        case .connected: return .green
-        case .scanning, .connecting, .searchingSelected, .pairing: return .orange
-        case .pairWaitingConfirm: return .blue
-        case .reconnecting: return .yellow
-        case .off, .noSelection: return .secondary
-        case .poweredOff, .pairRejected: return .red
-        }
-    }
-
-    private func configurePublisher() {
-        ESP32StatePublisher.shared.configure(
-            enabled: enabled,
-            heartbeatSeconds: heartbeat,
-            brightnessPercent: brightness,
-            screenOrientation: BuddyScreenOrientation(settingsValue: screenOrientation)
-        )
-    }
-
-    private func configureAppleCompanion() {
-        AppleCompanionPublisher.shared.configure(
-            enabled: appleCompanionEnabled,
-            heartbeatSeconds: appleCompanionHeartbeat
-        )
-    }
-
-    var body: some View {
-        Form {
-            Section(l10n["buddy"]) {
-                Toggle(l10n["buddy_enable_bluetooth"], isOn: $enabled)
-                    .onChange(of: enabled) { _, _ in
-                        configurePublisher()
-                    }
-
-                HStack {
-                    Text(l10n["buddy_connection_status"])
-                    Spacer()
-                    Circle()
-                        .fill(statusColor)
-                        .frame(width: 8, height: 8)
-                    Text(statusText)
-                        .foregroundStyle(.secondary)
-                        .font(.caption)
-                        .lineLimit(1)
-                        .truncationMode(.tail)
-                }
-
-                if bridge.status == .pairWaitingConfirm {
-                    HStack(spacing: 6) {
-                        Image(systemName: "hand.tap.fill")
-                            .foregroundStyle(.blue)
-                        Text(l10n["buddy_pair_confirm_hint"])
-                            .font(.caption)
-                            .foregroundStyle(.blue)
-                    }
-                }
-
-                if bridge.status == .pairRejected {
-                    HStack(spacing: 6) {
-                        Image(systemName: "exclamationmark.triangle.fill")
-                            .foregroundStyle(.red)
-                        Text(l10n["buddy_pair_rejected_hint"])
-                            .font(.caption)
-                            .foregroundStyle(.red)
-                    }
-                }
-
-                if bridge.usesLegacyPairingFallback {
-                    HStack(spacing: 6) {
-                        Image(systemName: "exclamationmark.triangle.fill")
-                            .foregroundStyle(.yellow)
-                        Text(l10n["buddy_legacy_firmware_hint"])
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-
-                Button {
-                    bridge.stop()
-                    if enabled { bridge.start() }
-                } label: {
-                    Label(l10n["buddy_reconnect"], systemImage: "arrow.triangle.2.circlepath")
-                }
-                .disabled(!enabled || bridge.selectedBuddyIdentifier == nil)
-            }
-
-            Section(l10n["buddy_select_section"]) {
-                if let selectedId = bridge.selectedBuddyIdentifier {
-                    HStack {
-                        Image(systemName: "checkmark.circle.fill")
-                            .foregroundStyle(.green)
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(l10n["buddy_selected_label"])
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                            Text(bridge.connectedPeripheralName ?? bridge.selectedBuddyName ?? selectedId.uuidString)
-                                .font(.body)
-                                .lineLimit(1)
-                                .truncationMode(.middle)
-                        }
-                        Spacer()
-                        Button(role: .destructive) {
-                            bridge.forgetSelection()
-                        } label: {
-                            Text(l10n["buddy_forget"])
-                        }
-                    }
-                }
-
-                ForEach(bridge.discovered) { device in
-                    Button {
-                        bridge.select(buddyId: device.id)
-                    } label: {
-                        HStack {
-                            Image(systemName: device.id == bridge.selectedBuddyIdentifier
-                                  ? "largecircle.fill.circle"
-                                  : "circle")
-                                .foregroundStyle(device.id == bridge.selectedBuddyIdentifier ? Color.accentColor : .secondary)
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(device.name)
-                                    .font(.body)
-                                Text("\(l10n["buddy_signal"]) \(device.rssi) dBm")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                                    .monospacedDigit()
-                            }
-                            Spacer()
-                            Image(systemName: rssiIconName(device.rssi))
-                                .foregroundStyle(.secondary)
-                        }
-                        .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                }
-
-                if bridge.discovered.isEmpty {
-                    Text(l10n["buddy_no_devices"])
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-
-                HStack {
-                    Button {
-                        // Restart discovery to force a fresh round of advertising packets.
-                        bridge.stopDiscovery()
-                        bridge.startDiscovery()
-                    } label: {
-                        Label(l10n["buddy_refresh"], systemImage: "arrow.clockwise")
-                    }
-                    .disabled(!enabled)
-                    Spacer()
-                    if bridge.status == .scanning {
-                        HStack(spacing: 6) {
-                            ProgressView().controlSize(.small)
-                            Text(l10n["buddy_scanning"])
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-                }
-            }
-
-            Section(l10n["buddy_sync"]) {
-                HStack {
-                    Text(l10n["buddy_sync_interval"])
-                    Spacer()
-                    Text(String(format: l10n["buddy_seconds_format"], heartbeat))
-                        .foregroundStyle(.secondary)
-                        .monospacedDigit()
-                }
-                Slider(value: $heartbeat, in: 1...30, step: 1)
-                    .onChange(of: heartbeat) { _, _ in
-                        configurePublisher()
-                    }
-                Text(l10n["buddy_sync_desc"])
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-
-            Section(l10n["buddy_display"]) {
-                HStack {
-                    Text(l10n["buddy_brightness"])
-                    Spacer()
-                    Text("\(Int(brightness.rounded()))%")
-                        .foregroundStyle(.secondary)
-                        .monospacedDigit()
-                }
-                Slider(value: $brightness, in: Double(ESP32Protocol.minBrightnessPercent)...Double(ESP32Protocol.maxBrightnessPercent), step: 1)
-                    .onChange(of: brightness) { _, newValue in
-                        brightness = Double(ESP32Protocol.clampedBrightnessPercent(newValue))
-                        configurePublisher()
-                    }
-                Text(l10n["buddy_brightness_desc"])
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-
-                Picker(l10n["buddy_screen_orientation"], selection: $screenOrientation) {
-                    Text(l10n["buddy_screen_orientation_up"]).tag(BuddyScreenOrientation.up.rawValue)
-                    Text(l10n["buddy_screen_orientation_down"]).tag(BuddyScreenOrientation.down.rawValue)
-                }
-                .pickerStyle(.segmented)
-                .onChange(of: screenOrientation) { _, _ in
-                    configurePublisher()
-                }
-                Text(l10n["buddy_screen_orientation_desc"])
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-
-            Section(l10n["apple_companion"]) {
-                Toggle(l10n["apple_companion_enable"], isOn: $appleCompanionEnabled)
-                    .onChange(of: appleCompanionEnabled) { _, _ in
-                        configureAppleCompanion()
-                    }
-
-                HStack {
-                    Text(l10n["apple_companion_status"])
-                    Spacer()
-                    Circle()
-                        .fill(appleCompanionStatusColor)
-                        .frame(width: 8, height: 8)
-                    Text(appleCompanionStatusText)
-                        .foregroundStyle(.secondary)
-                        .font(.caption)
-                        .lineLimit(1)
-                }
-
-                if appleCompanion.connectedPeerNames.isEmpty {
-                    Label(l10n["apple_companion_no_devices"], systemImage: "iphone")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                } else {
-                    ForEach(appleCompanion.connectedPeerNames, id: \.self) { name in
-                        Label(name, systemImage: "iphone")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-
-                HStack {
-                    Text(l10n["apple_companion_sync_interval"])
-                    Spacer()
-                    Text(String(format: l10n["buddy_seconds_format"], appleCompanionHeartbeat))
-                        .foregroundStyle(.secondary)
-                        .monospacedDigit()
-                }
-                Slider(value: $appleCompanionHeartbeat, in: 1...30, step: 1)
-                    .onChange(of: appleCompanionHeartbeat) { _, _ in
-                        configureAppleCompanion()
-                    }
-                    .disabled(!appleCompanionEnabled)
-
-                Button {
-                    appleCompanion.reconnect()
-                } label: {
-                    Label(l10n["apple_companion_restart"], systemImage: "arrow.triangle.2.circlepath")
-                }
-                .disabled(!appleCompanionEnabled)
-
-                if let error = appleCompanion.lastError {
-                    Text(error)
-                        .font(.caption)
-                        .foregroundStyle(.red)
-                }
-
-                Text(l10n["apple_companion_desc"])
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-
-            Section {
-                Text(l10n["buddy_desc"])
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-        }
-        .formStyle(.grouped)
-        .onReceive(Timer.publish(every: 1, on: .main, in: .common).autoconnect()) { _ in
-            refreshTick &+= 1
-        }
-        .onAppear {
-            if enabled {
-                bridge.startDiscovery()
-            }
-        }
-        .onDisappear {
-            bridge.stopDiscovery()
-        }
-        .onChange(of: enabled) { _, newValue in
-            if newValue {
-                bridge.startDiscovery()
-            } else {
-                bridge.stopDiscovery()
-            }
-        }
-    }
-
-    private func rssiIconName(_ rssi: Int) -> String {
-        // CoreBluetooth RSSI typically ranges from ~-30 (close) to -100 (far).
-        switch rssi {
-        case ..<(-85): return "wifi.exclamationmark"
-        case ..<(-70): return "wifi"
-        default:       return "wifi"
-        }
-    }
-
-    private var appleCompanionStatusText: String {
-        guard appleCompanion.enabled else {
-            return l10n["apple_companion_status_off"]
-        }
-        return appleCompanion.connectedPeerNames.isEmpty
-            ? l10n["apple_companion_status_waiting"]
-            : l10n["apple_companion_status_connected"]
-    }
-
-    private var appleCompanionStatusColor: Color {
-        guard appleCompanion.enabled else { return .secondary }
-        return appleCompanion.connectedPeerNames.isEmpty ? .orange : .green
-    }
-}
-
 // MARK: - About Page
 
 private struct AboutPage: View {
     @ObservedObject private var l10n = L10n.shared
-    @ObservedObject private var updater = UpdateChecker.shared
 
     var body: some View {
         VStack {
@@ -2367,13 +1801,6 @@ private struct AboutPage: View {
                     )
                 }
 
-                // In-app update section
-                updateSection
-
-                if let reason = updater.readOnlyInstallReason {
-                    readOnlyLocationNotice(reason)
-                }
-
                 Button {
                     DiagnosticsExporter.export()
                 } label: {
@@ -2400,126 +1827,6 @@ private struct AboutPage: View {
 
             Spacer()
         }
-    }
-
-    @ViewBuilder
-    private var updateSection: some View {
-        switch updater.state {
-        case .idle:
-            aboutButton(l10n["check_for_updates"], icon: "arrow.triangle.2.circlepath") {
-                updater.checkForUpdates()
-            }
-
-        case .checking:
-            HStack(spacing: 6) {
-                ProgressView().controlSize(.small)
-                Text(l10n["check_for_updates"])
-                    .font(.system(size: 12))
-                    .foregroundStyle(.secondary)
-            }
-
-        case .upToDate:
-            Button {
-                updater.checkForUpdates()
-            } label: {
-                HStack(spacing: 6) {
-                    Image(systemName: "checkmark.circle.fill")
-                        .foregroundStyle(.green)
-                        .font(.system(size: 13))
-                    Text(String(format: l10n["no_update_body"], AppVersion.current))
-                        .font(.system(size: 12))
-                        .foregroundStyle(.secondary)
-                }
-            }
-            .buttonStyle(.plain)
-            .onHover { h in
-                if h { NSCursor.pointingHand.push() } else { NSCursor.pop() }
-            }
-
-        case let .available(version):
-            VStack(spacing: 8) {
-                HStack(spacing: 6) {
-                    Image(systemName: "arrow.down.circle.fill")
-                        .foregroundStyle(.blue)
-                        .font(.system(size: 13))
-                    Text(String(format: l10n["update_available_body"], version, AppVersion.current))
-                        .font(.system(size: 12))
-                        .foregroundStyle(.secondary)
-                        .multilineTextAlignment(.center)
-                }
-
-                if updater.isHomebrewInstall {
-                    HStack(spacing: 8) {
-                        Text(l10n["update_homebrew_command"])
-                            .font(.system(size: 11, design: .monospaced))
-                            .foregroundStyle(.secondary)
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 5)
-                            .background(RoundedRectangle(cornerRadius: 6).fill(Color(nsColor: .controlBackgroundColor)))
-                        aboutButton(l10n["update_copy_command"], icon: "doc.on.doc") {
-                            NSPasteboard.general.clearContents()
-                            NSPasteboard.general.setString(l10n["update_homebrew_command"], forType: .string)
-                        }
-                    }
-                } else {
-                    // Sparkle owns the download + install alert; this button just
-                    // re-surfaces it if the user dismissed it earlier.
-                    aboutButton(l10n["update_now"], icon: "arrow.down.to.line") {
-                        updater.checkForUpdates()
-                    }
-                }
-            }
-
-        // Download progress and install state are owned by Sparkle's standard
-        // UI, not the About page — those enum cases no longer exist.
-
-        case let .failed(message):
-            VStack(spacing: 8) {
-                HStack(spacing: 6) {
-                    Image(systemName: "exclamationmark.triangle.fill")
-                        .foregroundStyle(.orange)
-                        .font(.system(size: 13))
-                    Text(String(format: l10n["update_failed_body"], message))
-                        .font(.system(size: 12))
-                        .foregroundStyle(.secondary)
-                        .lineLimit(2)
-                }
-                aboutButton(l10n["update_retry"], icon: "arrow.clockwise") {
-                    updater.checkForUpdates()
-                }
-            }
-        }
-    }
-
-    /// Sparkle cannot replace a bundle it may not write, and its failure alert
-    /// never says why. Say it up front, with the one fix that works.
-    private func readOnlyLocationNotice(_ reason: AppInstallLocation.ReadOnlyReason) -> some View {
-        let message: String
-        switch reason {
-        case .translocated: message = l10n["readonly_location_translocated"]
-        case .diskImage: message = l10n["readonly_location_disk_image"]
-        case .readOnlyVolume: message = l10n["readonly_location_volume"]
-        }
-        return VStack(spacing: 8) {
-            HStack(alignment: .top, spacing: 6) {
-                Image(systemName: "exclamationmark.triangle.fill")
-                    .foregroundStyle(.orange)
-                    .font(.system(size: 13))
-                Text(message)
-                    .font(.system(size: 12))
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            aboutButton(l10n["open_applications_folder"], icon: "folder") {
-                NSWorkspace.shared.open(URL(fileURLWithPath: "/Applications", isDirectory: true))
-            }
-        }
-        .frame(maxWidth: 420)
-        .padding(12)
-        .background(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .fill(Color.orange.opacity(0.08))
-        )
     }
 
     private func aboutButton(_ title: String, icon: String, action: @escaping () -> Void) -> some View {

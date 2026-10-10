@@ -92,9 +92,9 @@ public struct PushQuestionItem: Hashable, Sendable {
     }
 }
 
-/// Structured content, taken from the same queue entries the island renders
-/// (permissionQueue / questionQueue / the completion card), so the phone and
-/// the notch never disagree about what is being asked.
+/// Structured content, taken from the same state the island renders (the
+/// session's wait, the completion card), so the phone and the notch never
+/// disagree about what is being asked.
 public indirect enum PushContent: Hashable, Sendable {
     /// `detail`: command, file path or other one-line summary of the call.
     case permission(tool: String?, detail: String?)
@@ -309,9 +309,8 @@ public enum PushMessageFormatter {
             return (headline, clean(firstLine(of: detail), limit: detailLimit) ?? "")
 
         case .question(let items, let isSecret):
-            // The card never streams a secret prompt to a peripheral either
-            // (QuestionPayload.isSecret); a third-party push server is further
-            // off-device than the Buddy.
+            // A secret prompt (QuestionPayload.isSecret) never goes to a
+            // third-party push server.
             if isSecret { return (strings.question, strings.secretQuestion) }
             guard includeDetails else {
                 let labels = items.compactMap { clean($0.header, limit: headerLimit) }

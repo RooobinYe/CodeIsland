@@ -119,19 +119,14 @@ final class DisplayOnlyWaitTests: XCTestCase {
 
     // MARK: Classification
 
-    func testWaitingStatusWithoutAnIslandRequestIsDisplayOnly() {
-        XCTAssertEqual(DisplayOnlyWait.kind(status: .waitingApproval, islandHoldsRequest: false), .approval)
-        XCTAssertEqual(DisplayOnlyWait.kind(status: .waitingQuestion, islandHoldsRequest: false), .question)
-    }
-
-    func testARequestTheIslandHoldsIsNeverDisplayOnly() {
-        XCTAssertNil(DisplayOnlyWait.kind(status: .waitingApproval, islandHoldsRequest: true))
-        XCTAssertNil(DisplayOnlyWait.kind(status: .waitingQuestion, islandHoldsRequest: true))
+    func testWaitingStatusIsAWait() {
+        XCTAssertEqual(DisplayOnlyWait.kind(status: .waitingApproval), .approval)
+        XCTAssertEqual(DisplayOnlyWait.kind(status: .waitingQuestion), .question)
     }
 
     func testWorkingOrIdleSessionsAreNotWaiting() {
         for status in [AgentStatus.idle, .processing, .running] {
-            XCTAssertNil(DisplayOnlyWait.kind(status: status, islandHoldsRequest: false), "\(status)")
+            XCTAssertNil(DisplayOnlyWait.kind(status: status), "\(status)")
         }
     }
 
@@ -139,15 +134,15 @@ final class DisplayOnlyWaitTests: XCTestCase {
         let sessions = [
             "cowork": session(status: .waitingApproval),
             "cursor": session(status: .waitingQuestion),
-            "queued": session(status: .waitingApproval),
+            "terminal": session(status: .waitingApproval),
             "busy": session(status: .running),
         ]
         XCTAssertEqual(
-            DisplayOnlyWait.sessionIds(waitingOn: .approval, in: sessions, islandRequestSessionIds: ["queued"]),
-            ["cowork"]
+            DisplayOnlyWait.sessionIds(waitingOn: .approval, in: sessions),
+            ["cowork", "terminal"]
         )
         XCTAssertEqual(
-            DisplayOnlyWait.sessionIds(waitingOn: .question, in: sessions, islandRequestSessionIds: ["queued"]),
+            DisplayOnlyWait.sessionIds(waitingOn: .question, in: sessions),
             ["cursor"]
         )
     }

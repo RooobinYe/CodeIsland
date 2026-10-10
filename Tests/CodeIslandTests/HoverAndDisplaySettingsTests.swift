@@ -31,16 +31,6 @@ final class HoverAndDisplaySettingsTests: XCTestCase {
         XCTAssertEqual(NotchHoverInteraction.expandDelayRange.upperBound, 1.0)
     }
 
-    /// An approval or question card that opened while the hover delay was
-    /// running must not be swapped out for the session list when it elapses.
-    func testElapsedHoverDelayNeverReplacesAPendingCard() {
-        XCTAssertFalse(NotchHoverInteraction.hoverExpansionMayReplace(.approvalCard(sessionId: "s")))
-        XCTAssertFalse(NotchHoverInteraction.hoverExpansionMayReplace(.questionCard(sessionId: "s")))
-        XCTAssertTrue(NotchHoverInteraction.hoverExpansionMayReplace(.collapsed))
-        XCTAssertTrue(NotchHoverInteraction.hoverExpansionMayReplace(.sessionList))
-        XCTAssertTrue(NotchHoverInteraction.hoverExpansionMayReplace(.completionCard(sessionId: "s")))
-    }
-
     // MARK: - Content font size
 
     func testContentFontSizeGoesUpTo16pt() {

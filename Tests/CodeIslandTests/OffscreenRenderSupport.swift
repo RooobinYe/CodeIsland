@@ -242,14 +242,14 @@ struct DefaultsSandbox {
             SettingsKey.appLanguage, SettingsKey.contentFontSize, SettingsKey.showAgentDetails,
             SettingsKey.smartSuppress, SettingsKey.hideWhenNoSession, SettingsKey.showToolStatus,
             SettingsKey.collapsedWidthScale, SettingsKey.hapticOnHover, SettingsKey.hapticIntensity,
-            SettingsKey.sessionGroupingMode, SettingsKey.defaultSource, SettingsKey.soundEnabled,
+            SettingsKey.sessionGroupingMode, SettingsKey.soundEnabled,
             SettingsKey.quietHoursEnabled, SettingsKey.quietHoursStart, SettingsKey.quietHoursEnd,
             SettingsKey.autoCollapseAfterSessionJump, SettingsKey.maxVisibleSessions,
             SettingsKey.showUsageStats, SettingsKey.showClaudeQuota, SettingsKey.showGitBranch,
-            SettingsKey.aiMessageLines, SettingsKey.mascotSpeed, SettingsKey.notchHeightMode,
+            SettingsKey.aiMessageLines, SettingsKey.notchHeightMode,
             SettingsKey.customNotchHeight, SettingsKey.collapseOnMouseLeave, SettingsKey.maxToolHistory,
             SettingsKey.showSessionRecap, SettingsKey.showModelLabel, SettingsKey.showTaskProgress,
-            SettingsKey.showProjectName, SettingsKey.autoExpandOnQuestion, SettingsKey.followUpReminderMinutes,
+            SettingsKey.showProjectName, SettingsKey.followUpReminderMinutes,
         ] + ShortcutAction.allCases.flatMap { action in
             [
                 SettingsKey.shortcutEnabled(action.rawValue),
@@ -492,100 +492,5 @@ struct PhysicalNotch: Shape {
         p.addQuadCurve(to: CGPoint(x: rect.minX - flare, y: rect.minY), control: CGPoint(x: rect.minX, y: rect.minY))
         p.closeSubpath()
         return p
-    }
-}
-
-// MARK: - Demo requests
-
-/// Pending hook requests for demo states: the continuations are resumed on
-/// `release` so no task is left hanging.
-@MainActor
-enum DemoRequests {
-    static func hookEvent(_ payload: [String: Any]) throws -> HookEvent {
-        let data = try JSONSerialization.data(withJSONObject: payload)
-        return try XCTUnwrap(HookEvent(from: data), "HookEvent parse failed")
-    }
-
-    /// Queues a permission request on `state` and returns its release.
-    static func enqueuePermission(_ state: AppState, event: HookEvent) async -> () -> Void {
-        let before = state.permissionQueue.count
-        let task = Task { @MainActor in
-            await withCheckedContinuation { (continuation: CheckedContinuation<Data, Never>) in
-                state.permissionQueue.append(PermissionRequest(event: event, continuation: continuation))
-            }
-        }
-        await waitUntil { state.permissionQueue.count > before }
-        return {
-            for request in state.permissionQueue { request.continuation.resume(returning: Data()) }
-            state.permissionQueue.removeAll()
-            _ = task
-        }
-    }
-
-    /// Queues an AskUserQuestion request (as AppState.handleAskUserQuestion
-    /// builds it) and returns its release.
-    static func enqueueQuestion(
-        _ state: AppState,
-        sessionId: String,
-        cwd: String,
-        items: [(question: String, header: String?, options: [(String, String?)], multiSelect: Bool)]
-    ) async throws -> () -> Void {
-        let event = try hookEvent([
-            "hook_event_name": "PermissionRequest",
-            "session_id": sessionId,
-            "cwd": cwd,
-            "tool_name": "AskUserQuestion",
-            "tool_input": [
-                "questions": items.map { item -> [String: Any] in
-                    var q: [String: Any] = [
-                        "question": item.question,
-                        "multiSelect": item.multiSelect,
-                        "options": item.options.map { ["label": $0.0, "description": $0.1 ?? ""] },
-                    ]
-                    if let header = item.header { q["header"] = header }
-                    return q
-                },
-            ],
-        ])
-        let built = items.map { item -> AskUserQuestionItem in
-            let payload = QuestionPayload(
-                question: item.question,
-                options: item.options.isEmpty ? nil : item.options.map(\.0),
-                descriptions: item.options.isEmpty ? nil : item.options.map { $0.1 ?? "" },
-                header: item.header
-            )
-            return AskUserQuestionItem(payload: payload, answerKey: item.question, multiSelect: item.multiSelect)
-        }
-        let first = try XCTUnwrap(built.first).payload
-        return await enqueueQuestion(state, event: event, payload: first,
-                                     askState: AskUserQuestionState(items: built, answers: [:]))
-    }
-
-    /// Queues a question request with an explicit payload (nil `askState`
-    /// for the legacy Notification-style question) and returns its release.
-    static func enqueueQuestion(
-        _ state: AppState,
-        event: HookEvent,
-        payload: QuestionPayload,
-        askState: AskUserQuestionState?
-    ) async -> () -> Void {
-        let before = state.questionQueue.count
-        let task = Task { @MainActor in
-            await withCheckedContinuation { (continuation: CheckedContinuation<Data, Never>) in
-                state.questionQueue.append(QuestionRequest(
-                    event: event,
-                    question: payload,
-                    continuation: continuation,
-                    isFromPermission: askState != nil,
-                    askUserQuestionState: askState
-                ))
-            }
-        }
-        await waitUntil { state.questionQueue.count > before }
-        return {
-            for request in state.questionQueue { request.resolution.resumeHook(returning: Data()) }
-            state.questionQueue.removeAll()
-            _ = task
-        }
     }
 }

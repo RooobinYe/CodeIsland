@@ -105,7 +105,7 @@ struct TerminalActivator {
         allowHerdr: Bool = true
     ) {
         guard !session.isRemote else { return }
-        // Every caller is a user action (click, shortcut, Buddy button): the
+        // Every caller is a user action (click, shortcut): the
         // user is now dealing with this session, so its follow-ups stop.
         if let sessionId {
             NotificationCenter.default.post(

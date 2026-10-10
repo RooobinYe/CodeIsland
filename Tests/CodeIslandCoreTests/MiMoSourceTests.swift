@@ -30,13 +30,10 @@ final class MiMoSourceTests: XCTestCase {
         XCTAssertNil(SessionSnapshot.normalizedSupportedSource("mimolive"))
     }
 
-    func testLabelAndBuddySlot() {
+    func testLabel() {
         var session = SessionSnapshot()
         session.source = "mimo"
         XCTAssertEqual(session.sourceLabel, "MiMo")
-        // Every firmware slot is taken; MiMo Code is an OpenCode fork.
-        XCTAssertEqual(MascotID(sourceName: "mimo"), .opencode)
-        XCTAssertEqual(MascotID(sourceName: "mimo-code"), .opencode)
     }
 
     // MARK: - Process matching

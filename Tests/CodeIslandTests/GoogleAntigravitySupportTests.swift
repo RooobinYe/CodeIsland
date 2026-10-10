@@ -199,7 +199,6 @@ final class GoogleAntigravitySupportTests: XCTestCase {
             "conversationId": sessionId,
             "session_id": sessionId,
         ]))
-        XCTAssertTrue(appState.permissionQueue.isEmpty, "no approval card for Antigravity")
         XCTAssertEqual(appState.surface, .collapsed)
         XCTAssertEqual(appState.sessions[sessionId]?.status, .running)
         XCTAssertEqual(appState.sessions[sessionId]?.currentTool, "run_command")
@@ -231,7 +230,6 @@ final class GoogleAntigravitySupportTests: XCTestCase {
         appState.handleEvent(try XCTUnwrap(HookEvent(from: JSONSerialization.data(withJSONObject: stop))))
         XCTAssertEqual(appState.sessions[sessionId]?.status, .idle)
         XCTAssertNil(appState.sessions[sessionId]?.currentTool)
-        XCTAssertTrue(appState.permissionQueue.isEmpty)
     }
 
     /// The hook no longer waits on the island, and a PreToolUse hook Antigravity

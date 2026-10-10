@@ -1,13 +1,13 @@
 # CodeIsland Project Memory
 
-## Architecture: Bridge + Server Permission Routing
+## Architecture: Display-Only Island
 
-Two files must stay in sync for permission/blocking events:
-- `Sources/CodeIslandBridge/main.swift` — `isPermission` flag (controls socket blocking)
-- `Sources/CodeIsland/HookServer.swift` — `routeKind(for:)` (controls UI routing)
-
-**Always update both** when adding new CLI source support. See rule:
-`.omg/rules/learned/hookserver-and-bridge-permission-routing-must-stay-in-sync.md`
+This fork never answers a hook. The bridge (`Sources/CodeIslandBridge/main.swift`)
+treats every event — PermissionRequest and question Notifications included —
+as fire-and-forget and writes nothing to stdout, so each agent asks in its own
+UI. `HookServer.routeKind(for:)` only decides whether an event marks the
+session as blocked (`AppState.handleBlockingRequest`) or is a plain activity
+event (`AppState.handleEvent`); the server always replies `{}`.
 
 ---
 
@@ -17,17 +17,12 @@ Both `--source gemini` (agy) and `--source google-antigravity` share hook
 payload structure. They both:
 - Send `hook_event_name: "PreToolUse"` in JSON (not `"BeforeTool"`)
 - Omit `cwd` — bridge injects it from `FileManager.default.currentDirectoryPath`
-- Need `PreToolUse` treated as a blocking permission event
-
-Use `isGeminiBasedSource = (source == "gemini" || source == "google-antigravity")`
-as a named variable rather than duplicating inline checks.
 
 See rules:
 - `.omg/rules/learned/agy-hook-event-name-is-pretooluse.md`
 - `.omg/rules/learned/gemini-bridge-inject-cwd.md`
 - `.omg/rules/learned/gemini-and-google-antigravity-are-both-gemini-based.md`
 - `.omg/rules/learned/google_antigravity_toolcall_payload.md`
-- `.omg/rules/learned/terminal_focus_stealing_bridge_delay.md`
 
 ---
 

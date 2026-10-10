@@ -1,13 +1,10 @@
 import Foundation
 import CodeIslandCore
 
+/// Codex PermissionRequest routing: whether Codex's own auto reviewer, not
+/// the user, decides a request — and repair of the MCP approval tables older
+/// builds wrote into config.toml.
 struct CodexPermissionRules {
-    private let fileManager: FileManager
-
-    init(fileManager: FileManager = .default) {
-        self.fileManager = fileManager
-    }
-
     static func isCodexEvent(_ event: HookEvent) -> Bool {
         SessionSnapshot.normalizedSupportedSource(event.rawJSON["_source"] as? String) == "codex"
     }
@@ -199,93 +196,6 @@ struct CodexPermissionRules {
         return false
     }
 
-    static func prefixPattern(for event: HookEvent) -> [String]? {
-        if let suggested = findSuggestedPrefixRule(in: event.rawJSON) {
-            return suggested
-        }
-
-        guard event.toolName == "Bash",
-              let command = event.toolInput?["command"] as? String else {
-            return nil
-        }
-
-        return shellPrefix(from: command, maxTokens: 3)
-    }
-
-    @discardableResult
-    func persistAlwaysAllowRule(for event: HookEvent) -> Bool {
-        let codexHome = Self.codexHome(for: event)
-        if let mcpTool = Self.mcpToolApprovalTarget(for: event) {
-            return persistMCPToolApproval(serverID: mcpTool.serverID, toolName: mcpTool.toolName, codexHome: codexHome)
-        }
-
-        guard let pattern = Self.prefixPattern(for: event), !pattern.isEmpty else {
-            return false
-        }
-
-        let rulesDirectory = codexHome + "/rules"
-        let rulesPath = rulesDirectory + "/codeisland.rules"
-        let block = Self.ruleBlock(for: pattern)
-        let patternLine = Self.patternLine(for: pattern)
-
-        do {
-            try fileManager.createDirectory(atPath: rulesDirectory, withIntermediateDirectories: true)
-
-            let existing = (try? String(contentsOfFile: rulesPath, encoding: .utf8)) ?? ""
-            if existing.contains(patternLine), existing.contains(#"decision = "allow""#) {
-                return true
-            }
-
-            let separator = existing.isEmpty || existing.hasSuffix("\n") ? "" : "\n"
-            let updated = existing + separator + block
-            // A symlinked rules file (dotfiles) is written at its target.
-            return ConfigPathIdentity.write(Data(updated.utf8), to: rulesPath, fileManager: fileManager)
-        } catch {
-            return false
-        }
-    }
-
-    private func persistMCPToolApproval(serverID: String, toolName: String, codexHome: String) -> Bool {
-        let configPath = codexHome + "/config.toml"
-        let configDirectory = (configPath as NSString).deletingLastPathComponent
-
-        do {
-            try fileManager.createDirectory(atPath: configDirectory, withIntermediateDirectories: true)
-            let existing = (try? String(contentsOfFile: configPath, encoding: .utf8)) ?? ""
-            // Codex rejects the whole config.toml when a `mcp_servers.*` table has
-            // no transport, so a tools table under a server we never declared (the
-            // built-in `codex_app` namespace, say) would break every unrelated
-            // setting. Approve the call in-session instead of persisting it.
-            guard let declaredID = Self.declaredMCPServerID(in: existing, forToolNamespace: serverID) else {
-                return false
-            }
-            let updated = Self.configWithMCPToolApproval(
-                existing,
-                tablePath: ["mcp_servers", declaredID, "tools", toolName],
-                comment: String(Self.mcpToolApprovalComment.dropFirst(2))
-            )
-            // A symlinked config.toml (dotfiles) is written at its target.
-            return ConfigPathIdentity.write(Data(updated.utf8), to: configPath, fileManager: fileManager)
-        } catch {
-            return false
-        }
-    }
-
-    static func mcpToolApprovalTarget(for event: HookEvent) -> (serverID: String, toolName: String)? {
-        guard isCodexEvent(event),
-              let rawToolName = event.toolName,
-              rawToolName.hasPrefix("mcp__") else {
-            return nil
-        }
-
-        let rest = String(rawToolName.dropFirst("mcp__".count))
-        guard let separator = rest.range(of: "__") else { return nil }
-        let serverID = String(rest[..<separator.lowerBound])
-        let toolName = String(rest[separator.upperBound...])
-        guard !serverID.isEmpty, !toolName.isEmpty else { return nil }
-        return (serverID, toolName)
-    }
-
     /// The exact comment CodeIsland stamps above every approval table it writes.
     /// Only tables carrying it are considered ours to repair.
     static let mcpToolApprovalComment =
@@ -371,31 +281,6 @@ struct CodexPermissionRules {
         return line.trimmingCharacters(in: .whitespaces) == mcpToolApprovalComment
     }
 
-    /// The config.toml table key to write a tool approval under, for the server
-    /// namespace that appears in an `mcp__<namespace>__<tool>` tool name.
-    ///
-    /// The namespace is not always the server key. A tool name uses `__` as its
-    /// separator, so Codex sanitises the server name into it — `davinci-resolve`
-    /// arrives as `davinci_resolve` (#316). Writing the namespace verbatim then
-    /// creates a *second*, transport-less `[mcp_servers.davinci_resolve]` table
-    /// and Codex refuses to load the file at all, which surfaces as unrelated
-    /// settings failing to save days after the click that caused it.
-    ///
-    /// Returns nil when nothing declared matches, so the caller approves in
-    /// session rather than persisting a table that would invalidate the config.
-    static func declaredMCPServerID(in contents: String, forToolNamespace namespace: String) -> String? {
-        if configDeclaresMCPServerTransport(contents, serverID: namespace) {
-            return namespace
-        }
-
-        // Only a sanitisation difference is worth recovering. An ambiguous match
-        // (two declared servers collapsing to the same namespace) is left alone:
-        // approving the wrong server is worse than not persisting.
-        let candidates = declaredMCPServerIDs(in: contents)
-            .filter { sanitizedToolNamespace($0) == namespace }
-        return candidates.count == 1 ? candidates[0] : nil
-    }
-
     /// Every `[mcp_servers.<id>]` that declares a transport.
     static func declaredMCPServerIDs(in contents: String) -> [String] {
         let lines = contents.components(separatedBy: .newlines)
@@ -441,57 +326,6 @@ struct CodexPermissionRules {
             guard let key = tomlKey(from: line) else { return false }
             return key == "command" || key == "url"
         }
-    }
-
-    static func configWithMCPToolApproval(_ contents: String, tablePath: [String], comment: String) -> String {
-        var lines = contents.components(separatedBy: .newlines)
-        if contents.hasSuffix("\n") {
-            lines.removeLast()
-        }
-
-        if let headerIndex = lines.firstIndex(where: { tomlTableSegments(from: $0) == tablePath }) {
-            let endIndex = lines[(headerIndex + 1)...].firstIndex(where: { tomlTableSegments(from: $0) != nil })
-                ?? lines.endIndex
-            if let approvalIndex = lines[(headerIndex + 1)..<endIndex].firstIndex(where: { tomlKey(from: $0) == "approval_mode" }) {
-                lines[approvalIndex] = #"approval_mode = "approve""#
-            } else {
-                lines.insert(#"approval_mode = "approve""#, at: headerIndex + 1)
-            }
-        } else {
-            if !lines.isEmpty, lines.last?.isEmpty == false {
-                lines.append("")
-            }
-            lines.append("# \(comment)")
-            lines.append("[\(tablePath.map(tomlKeySegment).joined(separator: "."))]")
-            lines.append(#"approval_mode = "approve""#)
-        }
-
-        return lines.joined(separator: "\n") + "\n"
-    }
-
-    private static func patternLine(for pattern: [String]) -> String {
-        "pattern = [\(pattern.map(quotedRuleString).joined(separator: ", "))]"
-    }
-
-    private static func ruleBlock(for pattern: [String]) -> String {
-        """
-        # Added by CodeIsland when "Always Allow" is clicked for Codex.
-        prefix_rule(
-            \(patternLine(for: pattern)),
-            decision = "allow",
-            justification = "Allowed from CodeIsland Always Allow",
-        )
-
-        """
-    }
-
-    private static func quotedRuleString(_ value: String) -> String {
-        let escaped = value
-            .replacingOccurrences(of: "\\", with: "\\\\")
-            .replacingOccurrences(of: "\"", with: "\\\"")
-            .replacingOccurrences(of: "\n", with: "\\n")
-            .replacingOccurrences(of: "\r", with: "\\r")
-        return "\"\(escaped)\""
     }
 
     private static func eventReviewerValue(_ rawJSON: [String: Any]) -> String? {
@@ -638,123 +472,4 @@ struct CodexPermissionRules {
         return "\"\(escaped)\""
     }
 
-    private static func findSuggestedPrefixRule(in value: Any) -> [String]? {
-        if let dictionary = value as? [String: Any] {
-            for key in ["prefix_rule", "prefixRule"] {
-                if let pattern = stringArray(from: dictionary[key]) {
-                    return pattern
-                }
-            }
-
-            for nested in dictionary.values {
-                if let pattern = findSuggestedPrefixRule(in: nested) {
-                    return pattern
-                }
-            }
-        } else if let array = value as? [Any] {
-            for nested in array {
-                if let pattern = findSuggestedPrefixRule(in: nested) {
-                    return pattern
-                }
-            }
-        }
-        return nil
-    }
-
-    private static func stringArray(from value: Any?) -> [String]? {
-        if let pattern = value as? [String], !pattern.isEmpty {
-            return pattern
-        }
-        if let dictionary = value as? [String: Any],
-           let pattern = dictionary["pattern"] as? [String],
-           !pattern.isEmpty {
-            return pattern
-        }
-        return nil
-    }
-
-    private static func shellPrefix(from command: String, maxTokens: Int) -> [String]? {
-        var tokens: [String] = []
-        var current = ""
-        var quote: Character?
-        var escaping = false
-        var index = command.startIndex
-
-        func appendCurrentToken() {
-            guard !current.isEmpty else { return }
-            tokens.append(current)
-            current = ""
-        }
-
-        while index < command.endIndex {
-            let char = command[index]
-            let next = command.index(after: index)
-
-            if escaping {
-                current.append(char)
-                escaping = false
-                index = next
-                continue
-            }
-
-            if char == "\\" {
-                escaping = true
-                index = next
-                continue
-            }
-
-            if let activeQuote = quote {
-                if char == activeQuote {
-                    quote = nil
-                } else {
-                    current.append(char)
-                }
-                index = next
-                continue
-            }
-
-            if char == "'" || char == "\"" {
-                quote = char
-                index = next
-                continue
-            }
-
-            if char == "$", next < command.endIndex, command[next] == "(" {
-                appendCurrentToken()
-                break
-            }
-
-            if char == "\n" || char == "|" || char == ";" || char == "<" || char == ">" || char == "&" {
-                appendCurrentToken()
-                break
-            }
-
-            if char.isWhitespace {
-                appendCurrentToken()
-                if tokens.count >= maxTokens {
-                    break
-                }
-            } else {
-                current.append(char)
-            }
-
-            index = next
-        }
-
-        appendCurrentToken()
-
-        let prefix = Array(tokens.prefix(maxTokens))
-        guard !prefix.isEmpty, !looksLikeEnvironmentAssignment(prefix[0]) else {
-            return nil
-        }
-        return prefix
-    }
-
-    private static func looksLikeEnvironmentAssignment(_ token: String) -> Bool {
-        guard let equalsIndex = token.firstIndex(of: "="), equalsIndex != token.startIndex else {
-            return false
-        }
-        let name = token[..<equalsIndex]
-        return name.allSatisfy { $0.isLetter || $0.isNumber || $0 == "_" }
-    }
 }

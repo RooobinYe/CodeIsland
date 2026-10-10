@@ -12,20 +12,12 @@ APP_BUNDLE="$BUILD_DIR/$APP_NAME.app"
 ICON_CATALOG="Assets.xcassets"
 ICON_SOURCE="AppIcon.icon"
 ICON_INFO_PLIST=".build/AppIcon.partial.plist"
-WATCH_DIR="android-watch"
-WATCH_GRADLEW="$WATCH_DIR/gradlew"
-WATCH_APK_DEBUG="$WATCH_DIR/app/build/outputs/apk/debug/app-debug.apk"
-
-BUILD_MAC=true
-BUILD_WATCH=false
 NOTARIZE=false
 
 usage() {
     cat <<'EOF'
-Usage: ./build.sh [--watch] [--with-watch] [--notarize]
+Usage: ./build.sh [--notarize]
 
-  --watch       Build Android watch app only
-  --with-watch  Build macOS app and Android watch app
   --notarize    Notarize macOS app bundle / DMG after signing
   --help        Show this help
 EOF
@@ -33,13 +25,6 @@ EOF
 
 for arg in "$@"; do
     case "$arg" in
-        --watch)
-            BUILD_MAC=false
-            BUILD_WATCH=true
-            ;;
-        --with-watch)
-            BUILD_WATCH=true
-            ;;
         --notarize)
             NOTARIZE=true
             ;;
@@ -55,50 +40,21 @@ for arg in "$@"; do
     esac
 done
 
-build_watch() {
-    echo "Building Android watch app..."
-    if [ ! -x "$WATCH_GRADLEW" ]; then
-        echo "Missing executable Gradle wrapper: $WATCH_GRADLEW" >&2
-        exit 1
-    fi
-
-    "$WATCH_GRADLEW" -p "$WATCH_DIR" testDebugUnitTest
-    "$WATCH_GRADLEW" -p "$WATCH_DIR" assembleDebug
-
-    echo "Watch APK ready: $WATCH_APK_DEBUG"
-}
-
 build_mac() {
     echo "Building $APP_NAME (arm64 only)..."
     swift build -c release --arch arm64
 
-    ARM_DIR=".build/arm64-apple-macosx/release"
+    ARM_DIR="$(swift build -c release --arch arm64 --show-bin-path)"
 
     echo "Creating app bundle..."
     rm -rf "$APP_BUNDLE"
     mkdir -p "$APP_BUNDLE/Contents/MacOS"
     mkdir -p "$APP_BUNDLE/Contents/Helpers"
     mkdir -p "$APP_BUNDLE/Contents/Resources"
-    mkdir -p "$APP_BUNDLE/Contents/Frameworks"
 
     cp "$ARM_DIR/$APP_NAME" "$APP_BUNDLE/Contents/MacOS/$APP_NAME"
     cp "$ARM_DIR/codeisland-bridge" "$APP_BUNDLE/Contents/Helpers/codeisland-bridge"
     cp Info.plist "$APP_BUNDLE/Contents/Info.plist"
-
-    echo "Embedding frameworks..."
-    # Sparkle.xcframework macos-arm64_x86_64 slice is already universal; copy as-is to preserve symlinks.
-    SPARKLE_SRC=".build/artifacts/sparkle/Sparkle/Sparkle.xcframework/macos-arm64_x86_64/Sparkle.framework"
-    if [ ! -d "$SPARKLE_SRC" ]; then
-        echo "Missing Sparkle.framework at $SPARKLE_SRC" >&2
-        exit 1
-    fi
-    ditto "$SPARKLE_SRC" "$APP_BUNDLE/Contents/Frameworks/Sparkle.framework"
-
-    # Add rpath so executables can locate embedded frameworks.
-    install_name_tool -add_rpath "@executable_path/../Frameworks" \
-        "$APP_BUNDLE/Contents/MacOS/$APP_NAME" 2>/dev/null || true
-    install_name_tool -add_rpath "@executable_path/../../Frameworks" \
-        "$APP_BUNDLE/Contents/Helpers/codeisland-bridge" 2>/dev/null || true
 
     echo "Compiling app icon assets..."
     xcrun actool \
@@ -117,7 +73,7 @@ build_mac() {
     cp "Sources/CodeIsland/Resources/AppIcon.icns" "$APP_BUNDLE/Contents/Resources/AppIcon.icns"
 
     # Copy SPM resource bundles into Contents/Resources/ (required for code signing)
-    for bundle in .build/*/release/*.bundle; do
+    for bundle in "$ARM_DIR"/*.bundle; do
         if [ -e "$bundle" ]; then
             cp -R "$bundle" "$APP_BUNDLE/Contents/Resources/"
             break
@@ -140,21 +96,6 @@ build_mac() {
     fi
 
     echo "Code signing ($SIGN_ID)..."
-    # Sign embedded frameworks first (inside-out).
-    SPARKLE_FW="$APP_BUNDLE/Contents/Frameworks/Sparkle.framework"
-    # Sign nested helpers inside Sparkle before the framework itself.
-    for xpc in "$SPARKLE_FW/Versions/B/XPCServices/"*.xpc; do
-        [ -e "$xpc" ] || continue
-        codesign --force --options runtime --sign "$SIGN_ID" "$xpc"
-    done
-    if [ -d "$SPARKLE_FW/Versions/B/Updater.app" ]; then
-        codesign --force --options runtime --sign "$SIGN_ID" "$SPARKLE_FW/Versions/B/Updater.app"
-    fi
-    if [ -e "$SPARKLE_FW/Versions/B/Autoupdate" ]; then
-        codesign --force --options runtime --sign "$SIGN_ID" "$SPARKLE_FW/Versions/B/Autoupdate"
-    fi
-    codesign --force --options runtime --sign "$SIGN_ID" "$SPARKLE_FW"
-
     codesign --force --options runtime --sign "$SIGN_ID" "$APP_BUNDLE/Contents/Helpers/codeisland-bridge"
     codesign --force --options runtime --sign "$SIGN_ID" --entitlements "$ENTITLEMENTS" "$APP_BUNDLE"
 
@@ -216,10 +157,4 @@ build_mac() {
     echo "Run: open $APP_BUNDLE"
 }
 
-if [ "$BUILD_MAC" = true ]; then
-    build_mac
-fi
-
-if [ "$BUILD_WATCH" = true ]; then
-    build_watch
-fi
+build_mac

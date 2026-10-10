@@ -20,9 +20,7 @@ import CodeIslandCore
 signal(SIGPIPE, SIG_IGN)
 
 // Hard deadline: if anything hangs beyond this, bail out cleanly.
-// Non-blocking events get 8s; blocking (permission/question) gets no alarm
-// since those legitimately wait for user interaction.
-// The alarm is armed later once we know the event type.
+// The alarm is armed once stdin has been read.
 signal(SIGALRM) { _ in
     _exit(0)  // immediate, no cleanup — we're stuck anyway
 }
@@ -495,21 +493,13 @@ let eventName = json["hook_event_name"] as? String ?? ""
 let normalizedEventName = EventNormalizer.normalize(eventName)
 // agy wired through Gemini-style hooks names the event on stdin, not in --event.
 writeAntigravityDecisionIfNeeded(eventName: eventName)
-let isGeminiBasedSource = sourceTag == "google-antigravity" || sourceTag == "gemini"
-    || effectiveSource == "google-antigravity" || effectiveSource == "gemini"
-// Antigravity's PreToolUse is NOT a blocking approval: it was already answered
-// above, and holding it for an island card only stacked a second prompt in
-// front of Antigravity's own (#339).
-let isPermission = normalizedEventName == "PermissionRequest"
-let isQuestion = (normalizedEventName == "Notification" || eventName == "afterAgentThought")
-    && json["question"] as? String != nil
-let isBlocking = isPermission || isQuestion
+// The island only displays: no event — PermissionRequest and question
+// Notifications included — ever waits for a decision. The agent asks in its
+// own UI, so nothing is written to stdout.
+debugLog("event=\(eventName) normalized=\(normalizedEventName) session=\(sessionId)")
 
-debugLog("event=\(eventName) normalized=\(normalizedEventName) session=\(sessionId) permission=\(isPermission) question=\(isQuestion)")
-
-// Arm deadline for env collection + connect + send (protects all events).
-// For blocking events, this is disarmed right before the long recvAll wait.
-alarm(isBlocking ? 8 : 4)
+// Deadline for env collection + connect + send + the server's ack.
+alarm(4)
 
 // --- Deep terminal environment collection ---
 // Terminal app identification (only include when present)
@@ -628,7 +618,7 @@ if let host = env["CLAUDE_CODE_HOST_SESSION_ID"], !host.isEmpty {
 
 // Inject cwd if not already present. Gemini CLI / Google Antigravity hooks do not
 // include a `cwd` field, so CodeIsland cannot resolve the project name and falls back
-// to "Session". Populating it here lets the approval card show the actual folder name.
+// to "Session". Populating it here lets the session card show the actual folder name.
 if json["cwd"] == nil {
     json["cwd"] = FileManager.default.currentDirectoryPath
 }
@@ -637,22 +627,16 @@ if json["cwd"] == nil {
 guard let enriched = try? JSONSerialization.data(withJSONObject: json) else { exit(0) }
 
 // --- Connect to Unix socket ---
-if isGeminiBasedSource && isPermission {
-    // Delay slightly to give the terminal TTY time to display the prompt
-    // before showing the notch approval card.
-    usleep(250_000)
-}
-let connectTimeoutMs: Int32 = isBlocking ? 3000 : 1000
-guard let sock = connectSocket(socketPath, timeoutMs: connectTimeoutMs) else {
+guard let sock = connectSocket(socketPath, timeoutMs: 1000) else {
     debugLog("socket connect failed")
     exit(0)
 }
 
-// Set socket timeouts
-var sendTv = timeval(tv_sec: isBlocking ? 86400 : 1, tv_usec: 0)
+// Set socket timeouts: the server acks within ms, the headroom covers
+// main-thread scheduling.
+var sendTv = timeval(tv_sec: 1, tv_usec: 0)
 setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, &sendTv, socklen_t(MemoryLayout<timeval>.size))
-// Recv timeout: server responds within ms, but allow headroom for main-thread scheduling
-var recvTv = timeval(tv_sec: isBlocking ? 86400 : 1, tv_usec: 0)
+var recvTv = timeval(tv_sec: 1, tv_usec: 0)
 setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &recvTv, socklen_t(MemoryLayout<timeval>.size))
 
 // Send enriched event data
@@ -661,45 +645,9 @@ sendAll(sock, data: enriched)
 // Signal end of write (half-close → server sees EOF)
 shutdown(sock, SHUT_WR)
 
-// Blocking events wait for user interaction (minutes/hours) — disarm the deadline.
-// Non-blocking events keep the alarm; SO_RCVTIMEO (3s) + alarm(8) double-protect.
-if isBlocking {
-    alarm(0)
-}
-
-// Wait for server response — critical: without this, close() races ahead
+// Wait for the server's ack — critical: without this, close() races ahead
 // of NWListener's main-thread handler and the event is lost
-let response = recvAll(sock)
-
-// Blocking events: forward response to stdout
-if isBlocking && !response.isEmpty {
-    if sourceTag == "google-antigravity" || effectiveSource == "google-antigravity" || sourceTag == "gemini" || effectiveSource == "gemini" {
-        if let jsonObj = try? JSONSerialization.jsonObject(with: response) as? [String: Any],
-           let hookOutput = jsonObj["hookSpecificOutput"] as? [String: Any],
-           let decisionObj = hookOutput["decision"] as? [String: Any],
-           let behavior = decisionObj["behavior"] as? String {
-            let translatedBehavior = (behavior == "allow" || behavior == "always") ? "allow" : "deny"
-            let responseDict = ["decision": translatedBehavior]
-            if let responseData = try? JSONSerialization.data(withJSONObject: responseDict) {
-                FileHandle.standardOutput.write(responseData)
-            } else {
-                FileHandle.standardOutput.write(response)
-            }
-        } else {
-            // Fallback: search for "allow" or "deny" in raw string to be resilient
-            let responseStr = String(data: response, encoding: .utf8) ?? ""
-            if responseStr.contains("\"behavior\":\"allow\"") || responseStr.contains("\"behavior\":\"always\"") {
-                FileHandle.standardOutput.write(Data("{\"decision\":\"allow\"}".utf8))
-            } else if responseStr.contains("\"behavior\":\"deny\"") {
-                FileHandle.standardOutput.write(Data("{\"decision\":\"deny\"}".utf8))
-            } else {
-                FileHandle.standardOutput.write(response)
-            }
-        }
-    } else {
-        FileHandle.standardOutput.write(response)
-    }
-}
+_ = recvAll(sock)
 
 close(sock)
 exit(0)

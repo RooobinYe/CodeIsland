@@ -210,34 +210,16 @@ final class AppStateCodexAppServerTests: XCTestCase {
         )
     }
 
-    func testAppServerDisconnectDropsDeadChannelQuestionAndResumesCard() throws {
-        let appState = AppState()
-        let request = try XCTUnwrap(CodexAppServerClient.parseMessage(Data(
-            """
-            {"jsonrpc":"2.0","id":"request-1","method":"item/tool/requestUserInput","params":{"threadId":"disconnect-thread","questions":[{"id":"q1","question":"Continue?"}]}}
-            """.utf8
-        )))
-        appState.handleCodexAppServerMessage(request)
-        let sessionId = AppState.codexAppSessionPrefix + "disconnect-thread"
-        XCTAssertEqual(appState.questionQueue.count, 1)
-        XCTAssertEqual(appState.sessions[sessionId]?.status, .waitingQuestion)
-
-        appState.invalidateCodexAppServerQuestionsAfterDisconnect()
-
-        XCTAssertTrue(appState.questionQueue.isEmpty)
-        XCTAssertEqual(appState.sessions[sessionId]?.status, .processing)
-    }
-
     func testThreadClosedUsesUnifiedSessionCleanup() throws {
         let appState = AppState()
         let threadId = "closed-thread"
         let sessionId = AppState.codexAppSessionPrefix + threadId
-        let request = try XCTUnwrap(CodexAppServerClient.parseMessage(Data(
-            """
-            {"jsonrpc":"2.0","id":"request-1","method":"item/tool/requestUserInput","params":{"threadId":"\(threadId)","questions":[{"id":"q1","question":"Continue?"}]}}
-            """.utf8
-        )))
-        appState.handleCodexAppServerMessage(request)
+        var card = SessionSnapshot()
+        card.source = "codex"
+        card.status = .waitingQuestion
+        card.providerSessionId = threadId
+        card.termBundleId = AppState.codexAppBundleId
+        appState.sessions[sessionId] = card
 
         let transcript = FileManager.default.temporaryDirectory
             .appendingPathComponent("codeisland-codex-close-\(UUID().uuidString).jsonl")
@@ -247,7 +229,6 @@ final class AppStateCodexAppServerTests: XCTestCase {
         appState.attachTranscriptTailerIfNeeded(sessionId: sessionId)
 
         XCTAssertNotNil(appState.sessions[sessionId])
-        XCTAssertEqual(appState.questionQueue.count, 1)
         XCTAssertEqual(appState.attachedTranscriptPaths[sessionId], transcript.path)
 
         let closed = try XCTUnwrap(CodexAppServerClient.parseMessage(Data(
@@ -256,7 +237,6 @@ final class AppStateCodexAppServerTests: XCTestCase {
         appState.handleCodexAppServerMessage(closed)
 
         XCTAssertNil(appState.sessions[sessionId])
-        XCTAssertTrue(appState.questionQueue.isEmpty)
         XCTAssertNil(appState.attachedTranscriptPaths[sessionId])
 
         // A result already captured by the independent DB poll must not recreate

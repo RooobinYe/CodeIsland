@@ -422,11 +422,8 @@ extension AppState {
             break
         }
 
-        // Token deltas only move preview text. refreshDerivedState() pushes to the
-        // iPhone/Watch companion (Multipeer + BLE) and the Buddy (ESP32 BLE) on every
-        // call, so running it per token floods both links while a reply streams. The
-        // notch itself still redraws from `sessions`; the publishers catch up on the
-        // next status-bearing event.
+        // Token deltas only move preview text; the notch redraws from `sessions`
+        // itself, so derived state catches up on the next status-bearing event.
         let isDelta = name == "stream.text_delta" || name == "stream.thinking_delta"
         if isNew || !isDelta || previousStatus != snapshot.status {
             refreshDerivedState()

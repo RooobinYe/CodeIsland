@@ -19,7 +19,6 @@ final class DisplayOnlyWaitFollowUpTests: XCTestCase {
     private var heldBack = false
     private var played: [String] = []
     private var fired: [FollowUpReminder] = []
-    private var pending: [Task<Data, Never>] = []
     private var savedDefaults: [String: Any?] = [:]
 
     private let storeId = "local_7d3c2a10-display-only"
@@ -28,8 +27,6 @@ final class DisplayOnlyWaitFollowUpTests: XCTestCase {
     private let cursorBundleId = "com.todesktop.230313mzl4w4u92"
 
     private let watchedKeys = [
-        SettingsKey.autoExpandOnPermission,
-        SettingsKey.autoExpandOnQuestion,
         SettingsKey.smartSuppress,
         SettingsKey.completionNotificationStyle,
     ]
@@ -39,10 +36,6 @@ final class DisplayOnlyWaitFollowUpTests: XCTestCase {
         for key in watchedKeys {
             savedDefaults[key] = UserDefaults.standard.object(forKey: key)
         }
-        // Auto-expand on: a queued request would get its card back, so a
-        // display-only wait staying collapsed is the wait's own doing.
-        UserDefaults.standard.set(true, forKey: SettingsKey.autoExpandOnPermission)
-        UserDefaults.standard.set(true, forKey: SettingsKey.autoExpandOnQuestion)
         UserDefaults.standard.set(false, forKey: SettingsKey.smartSuppress)
         UserDefaults.standard.set("glance", forKey: SettingsKey.completionNotificationStyle)
 
@@ -51,7 +44,6 @@ final class DisplayOnlyWaitFollowUpTests: XCTestCase {
         heldBack = false
         played = []
         fired = []
-        pending = []
 
         appState = AppState()
         appState.aiworkStateDirOverride = "/nonexistent/codeisland-tests/agentix"
@@ -68,10 +60,6 @@ final class DisplayOnlyWaitFollowUpTests: XCTestCase {
     }
 
     override func tearDown() async throws {
-        for sid in Set(appState.permissionQueue.map { $0.event.sessionId ?? "default" }) {
-            appState.handlePeerDisconnect(sessionId: sid)
-        }
-        for task in pending { _ = await task.value }
         followUps = nil
         appState = nil
         for key in watchedKeys {
@@ -91,7 +79,6 @@ final class DisplayOnlyWaitFollowUpTests: XCTestCase {
         var audit = coworkAudit(.permissionRequested(id: "r1", toolName: "Bash", detail: "rm -rf build"))
         appState.applyCoworkUpdate(coworkUpdate(audit, permissionsRequested: 1))
         XCTAssertEqual(appState.sessions[coworkKey]?.status, .waitingApproval)
-        XCTAssertTrue(appState.permissionQueue.isEmpty)
         XCTAssertEqual(followUps.scheduler.origin(of: Key(.approval, coworkKey)), .displayOnly)
         XCTAssertEqual(followUps.armedWakeDate, now.addingTimeInterval(60))
 
@@ -126,7 +113,6 @@ final class DisplayOnlyWaitFollowUpTests: XCTestCase {
         XCTAssertEqual(fired.first?.origin, .displayOnly)
         XCTAssertEqual(played, ["PermissionRequest"])
         XCTAssertEqual(appState.surface, .collapsed)
-        XCTAssertNil(appState.hiddenPendingQuestionSessionId, "no island question to badge")
 
         audit.apply(.assistantOutput(isSubagent: false, toolUse: nil))
         appState.applyCoworkUpdate(coworkUpdate(audit))
@@ -316,7 +302,42 @@ final class DisplayOnlyWaitFollowUpTests: XCTestCase {
         XCTAssertNil(followUps.armedWakeDate)
     }
 
-    // MARK: - Terminal permission prompt (Notification hook)
+    // MARK: - Terminal permission prompt (Notification / PermissionRequest hook)
+
+    func testPermissionRequestHookRemindsUntilTheNextActivity() async throws {
+        appState.handleBlockingRequest(try event([
+            "hook_event_name": "PermissionRequest", "session_id": "term",
+            "tool_name": "Bash", "tool_input": ["command": "echo hi"],
+        ]), status: .waitingApproval)
+        XCTAssertEqual(followUps.scheduler.origin(of: Key(.approval, "term")), .displayOnly)
+
+        await advance(60)
+        XCTAssertEqual(fired.map(\.kind), [.approval])
+        XCTAssertEqual(appState.surface, .collapsed)
+
+        appState.handleEvent(try event([
+            "hook_event_name": "PostToolUse", "session_id": "term", "tool_name": "Bash",
+        ]))
+        XCTAssertNil(followUps.armedWakeDate)
+    }
+
+    /// The prompt's Notification and its PermissionRequest are one wait: the
+    /// clock started by the first keeps running.
+    func testPermissionRequestJoinsTheTerminalPromptsWait() async throws {
+        appState.handleEvent(try event([
+            "hook_event_name": "Notification", "session_id": "term",
+            "notification_type": "permission_prompt", "message": "Claude needs your permission to use Bash",
+        ]))
+        await advance(30)
+        appState.handleBlockingRequest(try event([
+            "hook_event_name": "PermissionRequest", "session_id": "term",
+            "tool_name": "Bash", "tool_input": ["command": "echo hi"],
+        ]), status: .waitingApproval)
+
+        await advance(30)
+        XCTAssertEqual(fired.map(\.kind), [.approval])
+        XCTAssertEqual(fired.first?.waitingSince, now.addingTimeInterval(-60))
+    }
 
     func testTerminalPermissionPromptRemindsUntilTheNextActivity() async throws {
         appState.handleEvent(try event([
@@ -337,27 +358,6 @@ final class DisplayOnlyWaitFollowUpTests: XCTestCase {
         XCTAssertNil(followUps.armedWakeDate)
         await advance(600)
         XCTAssertEqual(fired.count, 1)
-    }
-
-    /// The prompt's own PermissionRequest reaching the island: the same wait
-    /// changes hands, keeps its clock, and its reminder reopens the card.
-    func testQueuedRequestAdoptsTheTerminalPromptsWait() async throws {
-        appState.handleEvent(try event([
-            "hook_event_name": "Notification", "session_id": "term",
-            "notification_type": "permission_prompt", "message": "Claude needs your permission to use Bash",
-        ]))
-        await advance(30)
-        try await requestApproval("term")
-        XCTAssertEqual(followUps.scheduler.origin(of: Key(.approval, "term")), .island)
-        appState.surface = .collapsed
-
-        await advance(30)
-        XCTAssertEqual(fired.map(\.origin), [.island])
-        XCTAssertEqual(fired.first?.waitingSince, now.addingTimeInterval(-60))
-        XCTAssertEqual(appState.surface, .approvalCard(sessionId: "term"))
-
-        appState.approvePermission(expectedSessionId: "term")
-        XCTAssertNil(followUps.armedWakeDate, "answered on the island — the prompt's status does not linger as a wait")
     }
 
     // MARK: - Helpers
@@ -424,23 +424,6 @@ final class DisplayOnlyWaitFollowUpTests: XCTestCase {
             return XCTFail("unparseable frame: \(json)")
         }
         appState.handleAiWorkStreamEvent(name: name, frame: frame, agentId: "coder")
-    }
-
-    private func requestApproval(_ sessionId: String) async throws {
-        let request = try event([
-            "hook_event_name": "PermissionRequest",
-            "session_id": sessionId,
-            "tool_name": "Bash",
-            "tool_input": ["command": "echo hi"],
-        ])
-        pending.append(Task<Data, Never> { [appState] in
-            await withCheckedContinuation { appState!.handlePermissionRequest(request, continuation: $0) }
-        })
-        // Queued before going on, so tearDown can always resume it.
-        for _ in 0..<100 where !appState.permissionQueue.contains(where: { $0.event.sessionId == sessionId }) {
-            await Task.yield()
-        }
-        XCTAssertTrue(appState.permissionQueue.contains { $0.event.sessionId == sessionId })
     }
 
     private func event(_ payload: [String: Any]) throws -> HookEvent {

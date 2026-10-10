@@ -7,9 +7,7 @@ import Foundation
 /// with a single `~`, so the parser turns `2*3*4 = 24` into 2*3*4 with the
 /// 3 in italics, `__init__.py` into a bold "init" followed by ".py", and
 /// `~/code … a~b~c` into a strikethrough — the markers vanish and the text
-/// says something else. On the island that loses characters from previews;
-/// on the iPhone, Watch and Buddy, which get the plain characters, it loses
-/// them outright. Replies write arithmetic, globs, dunder names and home
+/// says something else. On the island that loses characters from previews. Replies write arithmetic, globs, dunder names and home
 /// paths far more often than emphasis in the middle of a word.
 ///
 /// So a delimiter run that could neither open emphasis at the start of a

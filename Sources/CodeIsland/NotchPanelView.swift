@@ -60,17 +60,6 @@ enum NotchHoverInteraction {
         return min(max(raw, expandDelayRange.lowerBound), expandDelayRange.upperBound)
     }
 
-    /// Whether an elapsed hover delay may still open the session list. A card
-    /// the island opened during the delay (an approval, or a question the user
-    /// just clicked open) is waiting on the user; swapping it for the list
-    /// would hide the one thing that needs an answer.
-    static func hoverExpansionMayReplace(_ surface: IslandSurface) -> Bool {
-        switch surface {
-        case .approvalCard, .questionCard: return false
-        default: return true
-        }
-    }
-
     static func nextPhase(from phase: NotchHoverPhase, event: NotchHoverEvent) -> NotchHoverPhase {
         switch (phase, event) {
         case (.collapsed, .mouseEntered):
@@ -270,19 +259,6 @@ struct NotchPanelView: View {
                     // doesn't expand the panel (smart suppress with the
                     // terminal frontmost); expanded cards show it inline.
                     .help(collapsedRecapTooltip)
-                    // With a question waiting off-screen, a click on the collapsed
-                    // bar opens its card. Otherwise the gesture is off entirely so
-                    // the bar keeps behaving exactly as before.
-                    .contentShape(Rectangle())
-                    .gesture(
-                        TapGesture().onEnded {
-                            hoverTimer?.invalidate()
-                            hoverTimer = nil
-                            appState.openPendingQuestionCard()
-                        },
-                        including: !shouldShowExpanded && appState.hiddenPendingQuestionSessionId != nil
-                            ? .all : .subviews
-                    )
                     // 0 means the chip isn't drawn right now (a tool name holds
                     // the slot) — keep the last width so the bar doesn't twitch.
                     .onPreferenceChange(QuotaChipWidthKey.self) { if $0 > 0 { quotaChipWidth = $0 } }
@@ -291,7 +267,6 @@ struct NotchPanelView: View {
                     .onPreferenceChange(CompactRightWingWidthKey.self) { if $0 > 0 { rightWingWidth = $0 } }
                 } else if showIdleIndicator {
                     IdleIndicatorBar(
-                        mascotSize: mascotSize,
                         compactWingWidth: compactWingWidth,
                         notchW: effectiveNotchW,
                         notchHeight: notchHeight,
@@ -312,76 +287,6 @@ struct NotchPanelView: View {
                         .padding(.horizontal, 12)
 
                     switch appState.surface {
-                    case .approvalCard(let sid):
-                        // Card is addressed by session — render that session's
-                        // request, not whatever is at the head of the queue. (#308)
-                        if let pending = appState.pendingPermission(forSession: sid) {
-                            let session = appState.sessions[sid]
-                            ApprovalBar(
-                                tool: pending.event.toolName ?? "Unknown",
-                                toolInput: pending.event.toolInput,
-                                queuePosition: appState.permissionQueuePosition(forSession: sid),
-                                queueTotal: appState.permissionQueue.count,
-                                session: session,
-                                sessionId: sid,
-                                appState: appState,
-                                alwaysSavesRule: CodexPermissionRules.isCodexEvent(pending.event),
-                                onAllow: { appState.approvePermission(always: false, expectedSessionId: sid) },
-                                onAlwaysAllow: { appState.approvePermission(always: true, expectedSessionId: sid) },
-                                onDeny: { appState.denyPermission(expectedSessionId: sid) },
-                                onDismiss: { appState.dismissPermissionPrompt(expectedSessionId: sid) }
-                            )
-                            .transition(.blurFade.combined(with: .scale(scale: 0.96, anchor: .top)))
-                        }
-                    case .questionCard(let sid):
-                        let session = appState.sessions[sid]
-                        if let q = appState.pendingQuestion(forSession: sid) {
-                            QuestionBar(
-                                question: q.question.question,
-                                options: q.question.options,
-                                descriptions: q.question.descriptions,
-                                allQuestions: q.askUserQuestionState?.items ?? [],
-                                requestId: q.id,
-                                sessionSource: session?.source,
-                                sessionContext: session?.cwd,
-                                session: session,
-                                sessionId: sid,
-                                appState: appState,
-                                queuePosition: appState.questionQueuePosition(forSession: sid),
-                                queueTotal: appState.questionQueue.count,
-                                onAnswer: { appState.answerQuestion($0, expectedSessionId: sid) },
-                                onAnswerMulti: { appState.answerQuestionMulti($0, expectedSessionId: sid) },
-                                onSkip: { appState.skipQuestion(expectedSessionId: sid) },
-                                onDismiss: { appState.dismissQuestion(expectedSessionId: sid) }
-                            )
-                            // One view per request. Answering a card promotes the
-                            // next session's request into this same slot, and
-                            // without a new identity SwiftUI hands it the previous
-                            // card's @State — answers, selection and typed text
-                            // included. (#333)
-                            .id(q.id)
-                            .transition(.blurFade.combined(with: .scale(scale: 0.96, anchor: .top)))
-                        } else if let preview = appState.previewQuestionPayload {
-                            QuestionBar(
-                                question: preview.question,
-                                options: preview.options,
-                                descriptions: preview.descriptions,
-                                allQuestions: [],
-                                requestId: nil,
-                                sessionSource: session?.source,
-                                sessionContext: session?.cwd,
-                                session: session,
-                                sessionId: sid,
-                                appState: appState,
-                                queuePosition: 1,
-                                queueTotal: 1,
-                                onAnswer: { _ in },
-                                onAnswerMulti: { _ in },
-                                onSkip: { },
-                                onDismiss: { }
-                            )
-                            .transition(.blurFade.combined(with: .scale(scale: 0.96, anchor: .top)))
-                        }
                     case .completionCard:
                         SessionListView(appState: appState, onlySessionId: appState.justCompletedSessionId)
                             .transition(.blurFade.combined(with: .move(edge: .top)))
@@ -450,7 +355,6 @@ struct NotchPanelView: View {
                     return
                 }
                 switch appState.surface {
-                case .approvalCard, .questionCard: return
                 case .completionCard:
                     // Completion card: mark entered on hover-in, block collapse until entered
                     if hovering {
@@ -495,7 +399,6 @@ struct NotchPanelView: View {
                         Task { @MainActor in
                             // Guard: mouse may have left during the delay
                             guard isHovered else { return }
-                            guard NotchHoverInteraction.hoverExpansionMayReplace(appState.surface) else { return }
                             if hapticOnHover {
                                 let performer = NSHapticFeedbackManager.defaultPerformer
                                 switch hapticIntensity {
@@ -572,7 +475,6 @@ struct NotchPanelView: View {
     }
 }
 
-
 // MARK: - Compact Wings (notch-level, 32px height)
 
 /// Left side: pixel character + status info
@@ -583,9 +485,6 @@ private struct CompactLeftWing: View {
     let hasNotch: Bool
     let showToolStatus: Bool
     @AppStorage(SettingsKey.sessionGroupingMode) private var groupingMode = SettingsDefaults.sessionGroupingMode
-    // Bound via @AppStorage so flipping the default mascot in Settings rerenders this view
-    // even when AppState.primarySource wasn't recomputed (no session mutations in flight).
-    @AppStorage(SettingsKey.defaultSource) private var settingsDefaultSource = SettingsDefaults.defaultSource
     @AppStorage(SettingsKey.showClaudeQuota) private var showClaudeQuota = SettingsDefaults.showClaudeQuota
     @AppStorage(SettingsKey.claudeQuotaChip) private var claudeQuotaChip = SettingsDefaults.claudeQuotaChip
 
@@ -594,22 +493,6 @@ private struct CompactLeftWing: View {
         guard let sid else { return nil }
         return appState.sessions[sid]
     }
-    private var displaySource: String {
-        // Honor user's configured default mascot whenever nothing is actively
-        // happening. Covers no-session and all-idle equally (#149) — without
-        // this, an idle session's source overrides the user preference.
-        if displayStatus == .idle { return settingsDefaultSource }
-        // Prefer mascotSource so a Cursor/Codex session with empty hook source
-        // still resolves via termBundleId instead of falling through to Clawd.
-        if let s = displaySession {
-            let resolved = s.mascotSource
-            if !resolved.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                return resolved
-            }
-        }
-        return appState.primarySource
-    }
-    private var displayStatus: AgentStatus { displaySession?.status ?? .idle }
     private var liveTool: String? { displaySession?.currentTool }
     @State private var shownTool: String?
     @State private var lingerTimer: Timer?
@@ -622,11 +505,6 @@ private struct CompactLeftWing: View {
                     SessionGroupingTabs(mode: $groupingMode)
                 }
             } else {
-                MascotView(source: displaySource, status: displayStatus, size: mascotSize)
-                    .id(displaySource)
-                    .transition(.opacity)
-                    .animation(.easeInOut(duration: 0.3), value: displaySource)
-
                 // On notch screens, show tool name only (no description, space is tight)
                 if hasNotch, showToolStatus, let tool = shownTool {
                     Text(ToolNameDisplay.compact(tool))
@@ -815,27 +693,17 @@ private struct CompactRightWing: View {
                         .shadow(color: Color(red: 0.4, green: 1.0, blue: 0.5).opacity(0.7), radius: 3)
                 }
 
-                // A question the island is not showing (auto-expand off, or
-                // Smart Suppress) gets its own badge: clicking the collapsed bar
-                // opens that card. A follow-up reminder bounces it like the bell.
-                if appState.hiddenPendingQuestionSessionId != nil {
-                    Image(systemName: "questionmark.bubble.fill")
-                        .font(.system(size: 10, weight: .bold))
-                        .foregroundStyle(Color(red: 1.0, green: 0.7, blue: 0.28))
-                        .symbolEffect(.pulse, options: .repeating, isActive: !reduceMotion)
-                        .symbolEffect(.bounce, value: appState.followUps.hintPulse)
-                        .help(l10n["question_waiting_hint"])
-                } else if appState.followUps.hintActive {
-                    // Follow-up reminder fired while collapsed (auto-expand off, or
-                    // an unseen completion): badge the bell and bounce it on each
-                    // reminder, until the island is opened or the item resolves.
+                if appState.followUps.hintActive {
+                    // Follow-up reminder fired while collapsed: badge the bell and
+                    // bounce it on each reminder, until the island is opened or
+                    // the item resolves.
                     Image(systemName: "bell.badge.fill")
                         .font(.system(size: 9, weight: .bold))
                         .foregroundStyle(Color(red: 1.0, green: 0.7, blue: 0.28))
                         .symbolEffect(.bounce, value: appState.followUps.hintPulse)
                         .help(l10n["follow_up_hint"])
                 } else if appState.status == .waitingApproval || appState.status == .waitingQuestion {
-                    // Pending approval/question badge
+                    // A session is blocked on the user
                     Image(systemName: "bell.fill")
                         .font(.system(size: 9, weight: .bold))
                         .foregroundStyle(Color(red: 1.0, green: 0.7, blue: 0.28))
@@ -1258,7 +1126,6 @@ private struct SessionGroupingTabs: View {
 // MARK: - Idle Indicator Bar
 
 private struct IdleIndicatorBar: View {
-    let mascotSize: CGFloat
     let compactWingWidth: CGFloat
     let notchW: CGFloat
     let notchHeight: CGFloat
@@ -1266,19 +1133,11 @@ private struct IdleIndicatorBar: View {
     let hovered: Bool
     @ObservedObject private var l10n = L10n.shared
     @AppStorage(SettingsKey.soundEnabled) private var soundEnabled = SettingsDefaults.soundEnabled
-    @AppStorage(SettingsKey.defaultSource) private var defaultSource = SettingsDefaults.defaultSource
     @StateObject private var quit = QuitConfirmation()
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         HStack(spacing: 0) {
-            // Left: mascot
-            HStack(spacing: 6) {
-                MascotView(source: defaultSource, status: .idle, size: mascotSize)
-                    .opacity(hovered ? 0.9 : 0.5)
-            }
-            .padding(.leading, 6)
-
             Spacer(minLength: hasNotch ? notchW : 0)
 
             // Right: expanded shows text + buttons, collapsed shows nothing
@@ -1311,1472 +1170,6 @@ private struct IdleIndicatorBar: View {
         // The buttons go with the hover, and an armed pill with them
         // (QuitConfirmButton cancels when it disappears).
         .animation(reduceMotion ? nil : NotchAnimation.micro, value: quit.isArmed)
-    }
-}
-
-// MARK: - Approval Bar (below notch, auto-expanded)
-
-private struct ApprovalToolDetailView: View {
-    let tool: String
-    let toolInput: [String: Any]?
-    var maxLines: Int? = nil
-    @AppStorage(SettingsKey.contentFontSize) private var contentFontSize = SettingsDefaults.contentFontSize
-
-    /// Follows Content Font Size, like the rest of the card (and the session
-    /// list, which shows this view under "Details").
-    private var type: NotchCardTypography { NotchCardTypography(contentFontSize: contentFontSize) }
-
-    private var filePath: String? {
-        toolInput?["file_path"] as? String
-    }
-
-    var body: some View {
-        Group {
-            switch tool {
-            case "Bash":
-                VStack(alignment: .leading, spacing: 2) {
-                    if let cmd = toolInput?["command"] as? String {
-                        HStack(alignment: .top, spacing: 4) {
-                            Text("$")
-                                .font(.system(size: type.body, weight: .bold, design: .monospaced))
-                                .foregroundStyle(Color(red: 0.3, green: 0.85, blue: 0.4))
-                            Text(cmd)
-                                .font(.system(size: type.body, design: .monospaced))
-                                .foregroundStyle(.white.opacity(0.85))
-                                .lineLimit(maxLines)
-                        }
-                    }
-                    if let desc = toolInput?["description"] as? String, !desc.isEmpty {
-                        Text(desc)
-                            .font(.system(size: type.secondary, design: .monospaced))
-                            .foregroundStyle(.white.opacity(0.55))
-                            .lineLimit(maxLines)
-                    }
-                }
-
-            case "Edit":
-                VStack(alignment: .leading, spacing: 3) {
-                    if let fp = filePath {
-                        Text(fp)
-                            .font(.system(size: type.caption, design: .monospaced))
-                            .foregroundStyle(.white.opacity(0.5))
-                            .lineLimit(1)
-                            .truncationMode(.head)
-                    }
-                    if let old = toolInput?["old_string"] as? String {
-                        HStack(alignment: .top, spacing: 4) {
-                            Text("−")
-                                .font(.system(size: type.body, weight: .bold, design: .monospaced))
-                                .foregroundStyle(Color(red: 1.0, green: 0.4, blue: 0.4))
-                            Text(old.prefix(120))
-                                .font(.system(size: type.secondary, design: .monospaced))
-                                .foregroundStyle(Color(red: 1.0, green: 0.4, blue: 0.4).opacity(0.85))
-                                .lineLimit(maxLines ?? 2)
-                        }
-                    }
-                    if let new = toolInput?["new_string"] as? String {
-                        HStack(alignment: .top, spacing: 4) {
-                            Text("+")
-                                .font(.system(size: type.body, weight: .bold, design: .monospaced))
-                                .foregroundStyle(Color(red: 0.3, green: 0.85, blue: 0.4))
-                            Text(new.prefix(120))
-                                .font(.system(size: type.secondary, design: .monospaced))
-                                .foregroundStyle(Color(red: 0.3, green: 0.85, blue: 0.4).opacity(0.7))
-                                .lineLimit(maxLines ?? 2)
-                        }
-                    }
-                }
-
-            case "Write":
-                VStack(alignment: .leading, spacing: 3) {
-                    if let fp = filePath {
-                        Text(fp)
-                            .font(.system(size: type.caption, design: .monospaced))
-                            .foregroundStyle(.white.opacity(0.5))
-                            .lineLimit(1)
-                            .truncationMode(.head)
-                    }
-                    if let content = toolInput?["content"] as? String {
-                        Text(content.prefix(200))
-                            .font(.system(size: type.secondary, design: .monospaced))
-                            .foregroundStyle(.white.opacity(0.6))
-                            .lineLimit(maxLines ?? 4)
-                    }
-                }
-
-            case "Read":
-                VStack(alignment: .leading, spacing: 2) {
-                    if let fp = filePath {
-                        Text(fp)
-                            .font(.system(size: type.secondary, design: .monospaced))
-                            .foregroundStyle(.white.opacity(0.7))
-                            .lineLimit(1)
-                            .truncationMode(.head)
-                    }
-                    if let offset = toolInput?["offset"] as? Int,
-                       let limit = toolInput?["limit"] as? Int {
-                        Text("\(L10n.shared["lines"]) \(offset + 1)–\(offset + limit)")
-                            .font(.system(size: type.caption, design: .monospaced))
-                            .foregroundStyle(.white.opacity(0.5))
-                            .lineLimit(1)
-                    }
-                }
-
-            case "Grep":
-                VStack(alignment: .leading, spacing: 2) {
-                    if let pattern = toolInput?["pattern"] as? String {
-                        HStack(alignment: .top, spacing: 4) {
-                            Text("/")
-                                .font(.system(size: type.body, weight: .bold, design: .monospaced))
-                                .foregroundStyle(Color(red: 0.9, green: 0.6, blue: 0.9))
-                            Text(pattern)
-                                .font(.system(size: type.body, design: .monospaced))
-                                .foregroundStyle(Color(red: 0.9, green: 0.6, blue: 0.9).opacity(0.8))
-                                .lineLimit(maxLines ?? 2)
-                        }
-                    }
-                    if let path = toolInput?["path"] as? String {
-                        Text(path)
-                            .font(.system(size: type.caption, design: .monospaced))
-                            .foregroundStyle(.white.opacity(0.5))
-                            .lineLimit(1)
-                            .truncationMode(.head)
-                    }
-                }
-
-            case "Glob":
-                VStack(alignment: .leading, spacing: 2) {
-                    if let pattern = toolInput?["pattern"] as? String {
-                        Text(pattern)
-                            .font(.system(size: type.body, design: .monospaced))
-                            .foregroundStyle(Color(red: 0.6, green: 0.8, blue: 1.0))
-                            .lineLimit(maxLines ?? 2)
-                    }
-                    if let path = toolInput?["path"] as? String {
-                        Text(path)
-                            .font(.system(size: type.caption, design: .monospaced))
-                            .foregroundStyle(.white.opacity(0.5))
-                            .lineLimit(1)
-                            .truncationMode(.head)
-                    }
-                }
-
-            default:
-                VStack(alignment: .leading, spacing: 2) {
-                    if let input = toolInput {
-                        ForEach(Array(input.keys.sorted().prefix(4)), id: \.self) { key in
-                            let val = input[key].map { "\($0)" } ?? ""
-                            HStack(alignment: .top, spacing: 4) {
-                                Text(key)
-                                    .font(.system(size: type.caption, weight: .semibold, design: .monospaced))
-                                    .foregroundStyle(Color(red: 0.6, green: 0.7, blue: 0.9))
-                                Text(String(val.prefix(160)))
-                                    .font(.system(size: type.secondary, design: .monospaced))
-                                    .foregroundStyle(.white.opacity(0.6))
-                                    .lineLimit(maxLines ?? 2)
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-/// Tooltips for the approval buttons, shared by the card and the session
-/// list's inline row.
-enum ApprovalHints {
-    /// What "Always" commits to differs by agent: Claude-style hooks add a
-    /// rule for the rest of the session, Codex gets a rule saved to disk
-    /// (CodexPermissionRules) that outlives it.
-    static func always(savesRule: Bool) -> String {
-        L10n.shared[savesRule ? "always_hint_saved" : "always_hint_session"]
-    }
-
-    /// The same, told apart for a Codex MCP tool, whose approval goes to
-    /// config.toml rather than the rules file.
-    static func always(scope: ApprovalAlwaysScope) -> String {
-        switch scope {
-        case .session: return L10n.shared["always_hint_session"]
-        case .codexRules: return L10n.shared["always_hint_saved"]
-        case .codexMCPConfig: return L10n.shared["always_hint_saved_mcp"]
-        }
-    }
-}
-
-/// Where "Always allow" puts its rule — what the approval card's link says.
-enum ApprovalAlwaysScope: Equatable {
-    /// Claude-style hooks: a rule for this tool, for the rest of the session.
-    case session
-    /// Codex: a prefix rule in ~/.codex/rules, kept for every session.
-    case codexRules
-    /// Codex MCP tool: an approval in ~/.codex/config.toml
-    /// (CodexPermissionRules.persistAlwaysAllowRule).
-    case codexMCPConfig
-
-    init(savesRule: Bool, tool: String) {
-        if !savesRule {
-            self = .session
-        } else {
-            self = ApprovalCopy.mcpParts(tool) == nil ? .codexRules : .codexMCPConfig
-        }
-    }
-
-    /// The file the rule is saved to, as the link shows it; nil for a
-    /// session rule.
-    var savedPath: String? {
-        switch self {
-        case .session: return nil
-        case .codexRules: return "~/.codex/rules"
-        case .codexMCPConfig: return "~/.codex/config.toml"
-        }
-    }
-}
-
-/// The approval card's words: its title ("Bash wants to run a command") and
-/// the scope its "Always" link spells out.
-enum ApprovalCopy {
-    /// What a tool does, for the title's verb.
-    enum Action: Equatable {
-        case command, change, read, search, web, mcp, agent, other
-    }
-
-    /// `mcp__server__tool`, split; nil for anything else.
-    static func mcpParts(_ tool: String) -> (server: String, tool: String)? {
-        guard tool.hasPrefix("mcp__") else { return nil }
-        let rest = tool.dropFirst("mcp__".count)
-        guard let separator = rest.range(of: "__") else { return nil }
-        let server = String(rest[..<separator.lowerBound])
-        let name = String(rest[separator.upperBound...])
-        guard !server.isEmpty, !name.isEmpty else { return nil }
-        return (server, name)
-    }
-
-    static func action(for tool: String) -> Action {
-        if mcpParts(tool) != nil { return .mcp }
-        let name = tool.lowercased().replacingOccurrences(of: "-", with: "_")
-        if name == "task" || name == "agent" || name.contains("subagent") || name.contains("spawn_agent") {
-            return .agent
-        }
-        if name.contains("webfetch") || name.contains("websearch") || name.contains("web_fetch")
-            || name.contains("web_search") || name.contains("fetch_url") {
-            return .web
-        }
-        // Before "change": Codex's write_stdin feeds a running command.
-        if name == "bash" || name == "command" || name.contains("shell") || name.contains("exec_command")
-            || name.contains("write_stdin") || name.contains("run_command") || name.contains("execute_command")
-            || name.contains("terminal") {
-            return .command
-        }
-        if name.contains("edit") || name.contains("write") || name.contains("apply_patch")
-            || name.contains("replace") || name.contains("create_file") || name.contains("delete_file")
-            || name.contains("move_file") {
-            return .change
-        }
-        if name == "read" || name.contains("read_file") || name.contains("view_file") || name.contains("list_dir") {
-            return .read
-        }
-        if name == "grep" || name == "glob" || name == "find" || name.contains("search") {
-            return .search
-        }
-        return .other
-    }
-
-    /// The tool as the card names it: an MCP tool by its own name, without
-    /// the `mcp__server__` prefix.
-    static func displayName(_ tool: String) -> String {
-        if let mcp = mcpParts(tool) { return mcp.tool }
-        return ToolNameDisplay.compact(tool, maxCharacters: 32)
-    }
-
-    /// The file a change or read is about, by name.
-    static func fileName(_ toolInput: [String: Any]?) -> String? {
-        for key in ["file_path", "notebook_path", "path"] {
-            if let path = toolInput?[key] as? String {
-                let name = (path as NSString).lastPathComponent
-                if !name.isEmpty { return name }
-            }
-        }
-        return nil
-    }
-
-    static func title(tool: String, toolInput: [String: Any]?) -> String {
-        let l10n = L10n.shared
-        let name = displayName(tool)
-        switch action(for: tool) {
-        case .command:
-            return String(format: l10n["approval_title_command"], name)
-        case .change:
-            if let file = fileName(toolInput) {
-                return String(format: l10n["approval_title_change_file"], name, file)
-            }
-            return String(format: l10n["approval_title_change"], name)
-        case .read:
-            if let file = fileName(toolInput) {
-                return String(format: l10n["approval_title_read_file"], name, file)
-            }
-            return String(format: l10n["approval_title_read"], name)
-        case .search:
-            return String(format: l10n["approval_title_search"], name)
-        case .web:
-            return String(format: l10n["approval_title_web"], name)
-        case .mcp:
-            let parts = mcpParts(tool) ?? (server: tool, tool: tool)
-            return String(format: l10n["approval_title_mcp"], parts.server, parts.tool)
-        case .agent:
-            return String(format: l10n["approval_title_agent"], name)
-        case .other:
-            return String(format: l10n["approval_title_generic"], name)
-        }
-    }
-
-    /// "Always allow Bash this session", or where Codex saves the rule.
-    static func alwaysLink(tool: String, scope: ApprovalAlwaysScope) -> String {
-        if let path = scope.savedPath {
-            return String(format: L10n.shared["card_always_saved"], path)
-        }
-        return String(format: L10n.shared["card_always_session"], displayName(tool))
-    }
-}
-
-/// Badge text for a global shortcut on a card's button, shown only when the
-/// user has turned that shortcut on in Settings (they are all off but the
-/// panel toggle by default) — the shortcut existed but nothing surfaced it
-/// (#12 UX).
-enum CardShortcutHint {
-    static func text(for action: ShortcutAction) -> String? {
-        guard action.isEnabled else { return nil }
-        return action.binding.displayString
-    }
-}
-
-/// Text sizes on the approval and question cards. They follow Settings ›
-/// Content Font Size like the session list, from the setting clamped to the
-/// sizes Settings offers: a hand-edited 40 would otherwise push the buttons
-/// out of the window, and a 4 would be unreadable.
-struct NotchCardTypography: Equatable {
-    /// The clamped Content Font Size.
-    let base: CGFloat
-
-    init(contentFontSize: Int) {
-        let smallest = ContentFontSize.choices.min() ?? 10
-        let largest = ContentFontSize.choices.max() ?? 16
-        base = CGFloat(min(max(contentFontSize, smallest), largest))
-    }
-
-    /// Card title and the question itself.
-    var title: CGFloat { base + 1 }
-    /// Command, option labels, the project in the context row.
-    var body: CGFloat { base }
-    /// Command description, diff lines, the branch, the queue position.
-    var secondary: CGFloat { base - 1 }
-    /// File paths, option descriptions, MCP argument names.
-    var caption: CGFloat { max(9, base - 2) }
-    /// The PERMISSION tag and shortcut badges.
-    var badge: CGFloat { max(8.5, base - 2) }
-    /// Button labels. Held back at the largest sizes so the decision row
-    /// keeps to one line in the 580pt panel.
-    var button: CGFloat { min(base + 1, 15) }
-    /// The "Always allow …" link and the answer field.
-    var link: CGFloat { base - 0.5 }
-    /// Agent icon in the context row.
-    var icon: CGFloat { base + 2 }
-}
-
-/// How much a card's action is worth, which sets how loud its button is:
-/// one filled primary per card, outlined alternatives, a quiet way out.
-enum NotchCardButtonRole {
-    /// The answer most often given — "Allow once", "Confirm". Filled green.
-    case primary
-    /// Refuses the request — "Deny". Outlined red.
-    case destructive
-    /// Another answer — "Skip". Outlined grey.
-    case secondary
-    /// Leaves the decision for later — "Hide", "Back". Text only.
-    case quiet
-}
-
-/// Colours of the card buttons. Shared with nothing else on purpose: the
-/// session list's inline approval row mirrors these values.
-enum NotchCardPalette {
-    /// White on it is 5:1 (WCAG AA); the prototype's brighter green was 3.4:1.
-    static let allowFill = Color(red: 0.16, green: 0.50, blue: 0.24)
-    /// Still 4.5:1 under white text.
-    static let allowFillHover = Color(red: 0.17, green: 0.53, blue: 0.26)
-    static let deny = Color(red: 0.92, green: 0.38, blue: 0.38)
-    static let link = Color(red: 0.45, green: 0.72, blue: 1.0)
-    static let permission = Color(red: 1.0, green: 0.6, blue: 0.2)
-}
-
-private struct NotchCardButton: View {
-    let label: String
-    let role: NotchCardButtonRole
-    let fontSize: CGFloat
-    /// Keyboard-shortcut badge (e.g. "⌘⇧A"), only when the shortcut is on.
-    var hint: String? = nil
-    /// Tooltip spelling out what the short label does.
-    var help: String? = nil
-    var isEnabled = true
-    /// Share a narrow row equally instead of hugging the label.
-    var expands = false
-    var systemImage: String? = nil
-    let action: () -> Void
-    @State private var hovering = false
-
-    private var foreground: Color {
-        switch role {
-        case .primary: return .white.opacity(isEnabled ? 1 : 0.6)
-        case .destructive: return NotchCardPalette.deny
-        case .secondary: return .white.opacity(0.85)
-        case .quiet: return .white.opacity(hovering ? 0.85 : 0.6)
-        }
-    }
-
-    private var fill: Color {
-        switch role {
-        case .primary:
-            guard isEnabled else { return NotchCardPalette.allowFill.opacity(0.35) }
-            return hovering ? NotchCardPalette.allowFillHover : NotchCardPalette.allowFill
-        case .destructive: return NotchCardPalette.deny.opacity(hovering ? 0.14 : 0)
-        case .secondary: return .white.opacity(hovering ? 0.10 : 0.03)
-        case .quiet: return .white.opacity(hovering ? 0.07 : 0)
-        }
-    }
-
-    private var stroke: Color {
-        switch role {
-        case .primary: return .clear
-        case .destructive: return NotchCardPalette.deny.opacity(hovering ? 0.9 : 0.7)
-        case .secondary: return .white.opacity(hovering ? 0.4 : 0.28)
-        case .quiet: return .clear
-        }
-    }
-
-    /// The badge stays at AA contrast on the button's own fill.
-    private var hintOpacity: Double {
-        switch role {
-        case .primary: return 0.9
-        case .destructive: return 0.85
-        case .secondary, .quiet: return 0.75
-        }
-    }
-
-    var body: some View {
-        Button(action: action) {
-            HStack(spacing: 5) {
-                if let systemImage {
-                    Image(systemName: systemImage)
-                        .font(.system(size: fontSize - 2, weight: .semibold))
-                }
-                Text(label)
-                    .font(.system(size: fontSize, weight: role == .quiet ? .medium : .semibold))
-                    .lineLimit(1)
-                    .minimumScaleFactor(expands ? 0.8 : 1)
-                if let hint {
-                    Text(hint)
-                        .font(.system(size: max(8.5, fontSize - 3), weight: .medium, design: .monospaced))
-                        .opacity(hintOpacity)
-                        .fixedSize()
-                }
-            }
-            .foregroundStyle(foreground)
-            .padding(.horizontal, role == .quiet ? 8 : (role == .primary ? 14 : 11))
-            .padding(.vertical, 6)
-            .frame(minHeight: 26)
-            .frame(maxWidth: expands ? .infinity : nil)
-            .background(RoundedRectangle(cornerRadius: 6).fill(fill))
-            .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(stroke, lineWidth: 1))
-            .contentShape(RoundedRectangle(cornerRadius: 6))
-        }
-        .buttonStyle(.plain)
-        .disabled(!isEnabled)
-        .onHover { h in withAnimation(NotchAnimation.micro) { hovering = h && isEnabled } }
-        .help(help ?? "")
-        .accessibilityLabel(label)
-        .accessibilityHint(help ?? "")
-    }
-}
-
-/// "Always allow Bash this session" — the approval card's leading link. A
-/// link rather than a fourth button: it is the one answer that outlives the
-/// request, so it says what it commits to and doesn't sit where a hand
-/// reaching for Allow lands.
-private struct NotchCardTextLink: View {
-    let label: String
-    let fontSize: CGFloat
-    var hint: String? = nil
-    var help: String? = nil
-    var lineLimit = 1
-    let action: () -> Void
-    @State private var hovering = false
-
-    var body: some View {
-        Button(action: action) {
-            HStack(alignment: .firstTextBaseline, spacing: 5) {
-                Text(label)
-                    .font(.system(size: fontSize, weight: .medium))
-                    .underline()
-                    .lineLimit(lineLimit)
-                    .truncationMode(.middle)
-                    .multilineTextAlignment(.leading)
-                if let hint {
-                    Text(hint)
-                        .font(.system(size: max(8.5, fontSize - 2), weight: .medium, design: .monospaced))
-                        .opacity(0.8)
-                        .fixedSize()
-                }
-            }
-            .foregroundStyle(NotchCardPalette.link.opacity(hovering ? 1 : 0.9))
-            .padding(.vertical, 4)
-            .frame(minHeight: 26)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .onHover { h in withAnimation(NotchAnimation.micro) { hovering = h } }
-        .help(help ?? "")
-        .accessibilityLabel(label)
-        .accessibilityHint(help ?? "")
-    }
-}
-
-/// Small coloured caps tag ahead of a card title — "PERMISSION".
-private struct NotchCardTag: View {
-    let text: String
-    let color: Color
-    let fontSize: CGFloat
-
-    var body: some View {
-        Text(text)
-            .font(.system(size: fontSize, weight: .bold, design: .monospaced))
-            .foregroundStyle(color)
-            .lineLimit(1)
-            .fixedSize()
-            .padding(.horizontal, 5)
-            .padding(.vertical, 2)
-            .background(color.opacity(0.14), in: RoundedRectangle(cornerRadius: 4))
-    }
-}
-
-/// A card's place among the requests waiting ("1 of 3"); nil when it is the
-/// only one.
-enum NotchCardQueueLabel {
-    static func text(position: Int, total: Int) -> String? {
-        guard total > 1 else { return nil }
-        return String(format: L10n.shared["card_queue_position"], position, total)
-    }
-}
-
-/// CLI icon + project folder (or session title) + branch heading an approval
-/// or question card, so a card always says which session is asking — with
-/// several agents queued, "! Bash" alone gave no clue whose command it was.
-/// Clicking it focuses that session's terminal, where the full transcript is.
-/// With more than one request waiting it ends in the card's place in the
-/// queue ("1 of 3").
-private struct NotchCardContextRow: View {
-    let source: String?
-    let cwd: String?
-    let session: SessionSnapshot?
-    let canJump: Bool
-    var queuePosition = 1
-    var queueTotal = 1
-    let type: NotchCardTypography
-    let onJump: () -> Void
-    @AppStorage(SettingsKey.showProjectName) private var showProjectName = SettingsDefaults.showProjectName
-    @AppStorage(SettingsKey.showGitBranch) private var showGitBranch = SettingsDefaults.showGitBranch
-    @State private var hovering = false
-
-    static func isShown(source: String?, cwd: String?, canJump: Bool, queueTotal: Int = 1) -> Bool {
-        source != nil || cwd != nil || canJump || queueTotal > 1
-    }
-
-    private var branchLabel: String? {
-        guard showGitBranch, let branch = session?.gitBranch, !branch.isEmpty else { return nil }
-        return session?.gitIsWorktree == true ? "\(branch) ⧉" : branch
-    }
-
-    var body: some View {
-        HStack(spacing: 6) {
-            if let src = source, let icon = cliIcon(source: src, size: type.icon) {
-                Image(nsImage: icon)
-                    .resizable()
-                    .frame(width: type.icon, height: type.icon)
-                    .help(session?.sourceLabel ?? src)
-                    .accessibilityLabel(session?.sourceLabel ?? src)
-            }
-            if let label = SessionHeadline.contextLabel(
-                projectName: cwd.map { ($0 as NSString).lastPathComponent },
-                sessionLabel: session?.sessionLabel,
-                showProjectName: showProjectName
-            ) {
-                Text(label)
-                    .font(.system(size: type.body, weight: .bold, design: .monospaced))
-                    .foregroundStyle(.white.opacity(0.9))
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-                    .layoutPriority(2)
-            }
-            if let branch = branchLabel {
-                HStack(spacing: 2) {
-                    Image(systemName: "arrow.triangle.branch")
-                        .font(.system(size: type.secondary - 1, weight: .semibold))
-                        .accessibilityHidden(true)
-                    Text(branch)
-                        .font(.system(size: type.secondary, design: .monospaced))
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                        .frame(minWidth: BranchLabelMetrics.minimumWidth(for: branch, fontSize: type.secondary))
-                }
-                .foregroundStyle(.white.opacity(0.6))
-                .help(branch)
-                .layoutPriority(1)
-            }
-            if canJump {
-                Image(systemName: "arrow.up.forward.app")
-                    .font(.system(size: type.secondary))
-                    .foregroundStyle(.white.opacity(hovering ? 0.85 : 0.55))
-                    .accessibilityHidden(true)
-            }
-            Spacer(minLength: 8)
-            if let queue = NotchCardQueueLabel.text(position: queuePosition, total: queueTotal) {
-                Text(queue)
-                    .font(.system(size: type.secondary, weight: .semibold, design: .monospaced))
-                    .foregroundStyle(.white.opacity(0.6))
-                    .lineLimit(1)
-                    .fixedSize()
-            }
-        }
-        .padding(.horizontal, 6)
-        .padding(.vertical, 3)
-        .background(
-            RoundedRectangle(cornerRadius: 5)
-                .fill(hovering ? Color.white.opacity(0.09) : Color.clear)
-        )
-        // The hover wash reaches past the column; the text lines up with it.
-        .padding(.horizontal, -6)
-        .contentShape(Rectangle())
-        .onTapGesture { onJump() }
-        .onHover { h in
-            guard canJump else { return }
-            withAnimation(NotchAnimation.micro) { hovering = h }
-        }
-        .help(canJump ? L10n.shared["card_jump_hint"] : "")
-        .accessibilityElement(children: .combine)
-        .accessibilityAddTraits(canJump ? .isButton : [])
-        .accessibilityHint(canJump ? L10n.shared["card_jump_hint"] : "")
-        .accessibilityAction { if canJump { onJump() } }
-    }
-}
-
-private struct ApprovalBar: View {
-    let tool: String
-    let toolInput: [String: Any]?
-    let queuePosition: Int
-    let queueTotal: Int
-    let session: SessionSnapshot?
-    let sessionId: String
-    let appState: AppState
-    /// "Always" persists a Codex rule rather than a session one.
-    var alwaysSavesRule = false
-    let onAllow: () -> Void
-    let onAlwaysAllow: () -> Void
-    let onDeny: () -> Void
-    let onDismiss: () -> Void
-
-    // Jump validation state for click-to-jump functionality
-    @State private var failureShakeOffset: CGFloat = 0
-    @State private var jumpValidationTask: Task<Void, Never>?
-    @AppStorage(SettingsKey.autoCollapseAfterSessionJump) private var autoCollapseAfterSessionJump = SettingsDefaults.autoCollapseAfterSessionJump
-    @AppStorage(SettingsKey.contentFontSize) private var contentFontSize = SettingsDefaults.contentFontSize
-
-    private var serverName: String? {
-        toolInput?["server_name"] as? String
-    }
-
-    private var alwaysScope: ApprovalAlwaysScope {
-        ApprovalAlwaysScope(savesRule: alwaysSavesRule, tool: tool)
-    }
-
-    /// Same rule as QuestionBar: no local terminal (remote, unknown harness)
-    /// means no jump affordance.
-    private var canJumpToTerminal: Bool { session?.canJumpFromNotch ?? false }
-
-    var body: some View {
-        let type = NotchCardTypography(contentFontSize: contentFontSize)
-        VStack(alignment: .leading, spacing: 8) {
-            // Which session is asking — doubles as the click-to-jump target
-            if NotchCardContextRow.isShown(source: session?.source, cwd: session?.cwd,
-                                           canJump: canJumpToTerminal, queueTotal: queueTotal) {
-                NotchCardContextRow(
-                    source: session?.source,
-                    cwd: session?.cwd,
-                    session: session,
-                    canJump: canJumpToTerminal,
-                    queuePosition: queuePosition,
-                    queueTotal: queueTotal,
-                    type: type,
-                    onJump: handleCardClick
-                )
-            }
-
-            // What is being asked
-            HStack(alignment: .firstTextBaseline, spacing: 7) {
-                NotchCardTag(text: L10n.shared["card_permission_tag"], color: NotchCardPalette.permission, fontSize: type.badge)
-                let title = ApprovalCopy.title(tool: tool, toolInput: toolInput)
-                Text(title)
-                    .font(.system(size: type.title, weight: .semibold))
-                    .foregroundStyle(.white.opacity(0.92))
-                    .lineLimit(2)
-                    .truncationMode(.middle)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .help(tool == title ? title : "\(title)\n\(tool)")
-                if let server = serverName {
-                    Text("(\(server))")
-                        .font(.system(size: type.secondary))
-                        .foregroundStyle(Color(red: 0.6, green: 0.7, blue: 0.9))
-                        .lineLimit(1)
-                }
-                Spacer(minLength: 0)
-            }
-            .contentShape(Rectangle())
-            .onTapGesture { handleCardClick() }
-
-            // Tool-specific detail view. A long command scrolls inside the
-            // window rather than pushing the buttons off its bottom edge.
-            if toolInput != nil {
-                PanelFittedScrollArea(minimumHeight: Self.detailMinimumHeight(type)) {
-                    ApprovalToolDetailView(tool: tool, toolInput: toolInput)
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 8)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                }
-                .background(RoundedRectangle(cornerRadius: 6).fill(Color.white.opacity(0.06)))
-                .contentShape(Rectangle())
-                .onTapGesture { handleCardClick() }
-            }
-
-            actionRow(type)
-        }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 10)
-        .offset(x: failureShakeOffset)
-        .onDisappear {
-            jumpValidationTask?.cancel()
-            jumpValidationTask = nil
-        }
-    }
-
-    /// Three lines of command, so a scrolled detail never shrinks to a sliver.
-    static func detailMinimumHeight(_ type: NotchCardTypography) -> CGFloat {
-        (type.body * 1.25 * 3 + 16).rounded(.up)
-    }
-
-    // MARK: - Actions
-
-    /// Always (a link stating its scope) on the leading edge; Hide, Deny and
-    /// the one filled button, Allow once, on the trailing edge — the slot a
-    /// macOS dialog keeps for its default. Where the row can't hold them all
-    /// (a long tool name, German labels, a large font) the link takes its own
-    /// line above, and in a very narrow panel the buttons share the width.
-    private func actionRow(_ type: NotchCardTypography) -> some View {
-        ViewThatFits(in: .horizontal) {
-            HStack(spacing: 8) {
-                alwaysLink(type, lineLimit: 1)
-                Spacer(minLength: 12)
-                decisionButtons(type, expands: false)
-            }
-            VStack(alignment: .leading, spacing: 4) {
-                alwaysLink(type, lineLimit: 2)
-                    .frame(minWidth: 0, idealWidth: 0, maxWidth: .infinity, alignment: .leading)
-                HStack(spacing: 8) {
-                    Spacer(minLength: 0)
-                    decisionButtons(type, expands: false)
-                }
-            }
-            VStack(alignment: .leading, spacing: 4) {
-                alwaysLink(type, lineLimit: 2)
-                    .frame(minWidth: 0, idealWidth: 0, maxWidth: .infinity, alignment: .leading)
-                HStack(spacing: 6) {
-                    decisionButtons(type, expands: true)
-                }
-                .frame(minWidth: 0, idealWidth: 0, maxWidth: .infinity)
-            }
-        }
-    }
-
-    private func alwaysLink(_ type: NotchCardTypography, lineLimit: Int) -> some View {
-        NotchCardTextLink(
-            label: ApprovalCopy.alwaysLink(tool: tool, scope: alwaysScope),
-            fontSize: type.link,
-            hint: CardShortcutHint.text(for: .approveAlways),
-            help: ApprovalHints.always(scope: alwaysScope),
-            lineLimit: lineLimit,
-            action: onAlwaysAllow
-        )
-    }
-
-    @ViewBuilder
-    private func decisionButtons(_ type: NotchCardTypography, expands: Bool) -> some View {
-        NotchCardButton(label: L10n.shared["card_hide"], role: .quiet, fontSize: type.button,
-                        help: L10n.shared["dismiss_card_hint"], action: onDismiss)
-        NotchCardButton(label: L10n.shared["card_deny"], role: .destructive, fontSize: type.button,
-                        hint: CardShortcutHint.text(for: .deny), expands: expands, action: onDeny)
-        NotchCardButton(label: L10n.shared["card_allow_once"], role: .primary, fontSize: type.button,
-                        hint: CardShortcutHint.text(for: .approve), expands: expands, action: onAllow)
-    }
-
-    // MARK: - Click-to-jump handling
-
-    /// Handle click on the approval card to jump to the owning terminal.
-    /// Behaviour lives in `startNotchCardJump`, shared with QuestionBar:
-    /// - nil session: play error sound + shake animation
-    /// - remote session: skip (no terminal to jump to)
-    /// - valid local session: activate terminal + optionally auto-collapse
-    private func handleCardClick() {
-        jumpValidationTask?.cancel()
-        jumpValidationTask = startNotchCardJump(
-            kind: .approval,
-            session: session,
-            sessionId: sessionId,
-            appState: appState,
-            autoCollapseAfterJump: autoCollapseAfterSessionJump,
-            shakeOffset: $failureShakeOffset
-        )
-    }
-}
-
-// MARK: - Question Bar (below notch, auto-expanded)
-
-func makeQuestionBarFreeTextAnswer(
-    question: String,
-    text: String
-) -> AskUserQuestionAnswer? {
-    guard !text.isEmpty else { return nil }
-    return AskUserQuestionAnswer(
-        question: question,
-        answer: text,
-        selectedOptions: [],
-        customInput: text
-    )
-}
-
-/// Answer state of one question card: which question of the wizard is up,
-/// the answers given so far, and the in-progress selection or text.
-///
-/// It belongs to one `QuestionRequest`. SwiftUI keeps a view's `@State` for
-/// as long as the view keeps its identity, and the card slot keeps its
-/// identity when one request replaces another in place — answering session
-/// A's card promotes session B's straight into the same `QuestionBar`. The
-/// answers collected for A then led B's submission, and since answers are
-/// mapped onto questions by position, B's question was sent A's answer.
-/// Recording against a different request therefore starts over. (#333)
-struct QuestionWizardState {
-    private(set) var requestId: UUID?
-    private(set) var currentQuestionIndex = 0
-    private(set) var collectedAnswers: [AskUserQuestionAnswer] = []
-    var selectedIndex: Int?
-    var selectedIndices: Set<Int> = []
-    var showOtherInput = false
-    var otherText = ""
-    var textInput = ""
-
-    init(requestId: UUID? = nil) {
-        self.requestId = requestId
-    }
-
-    /// Drop everything collected for any other request.
-    mutating func bind(to requestId: UUID?) {
-        guard self.requestId != requestId else { return }
-        self = QuestionWizardState(requestId: requestId)
-    }
-
-    /// Record the answer to the current question of the request `requestId`,
-    /// which asks `questionCount` questions. Returns the submission — one
-    /// answer per question, all given on that request — once the last one is
-    /// answered, and nil while more remain.
-    ///
-    /// The final answer is not kept: if the submission is refused, answering
-    /// again must not append a second copy.
-    mutating func record(
-        _ answer: AskUserQuestionAnswer,
-        for requestId: UUID?,
-        questionCount: Int
-    ) -> [AskUserQuestionAnswer]? {
-        bind(to: requestId)
-        guard currentQuestionIndex + 1 < questionCount else {
-            return collectedAnswers + [answer]
-        }
-        collectedAnswers.append(answer)
-        currentQuestionIndex += 1
-        resetInput()
-        return nil
-    }
-
-    mutating func goBack() {
-        guard currentQuestionIndex > 0, !collectedAnswers.isEmpty else { return }
-        collectedAnswers.removeLast()
-        currentQuestionIndex -= 1
-        resetInput()
-    }
-
-    mutating func resetInput() {
-        selectedIndex = nil
-        selectedIndices = []
-        showOtherInput = false
-        otherText = ""
-        textInput = ""
-    }
-
-    // What the card's primary button would send. While it would send
-    // nothing, the button shows as unavailable instead of doing nothing.
-
-    /// Submit on a question answered by typing.
-    var canSubmitText: Bool { !textInput.isEmpty }
-    /// Submit under "Other" on a single-choice question.
-    var canSubmitOther: Bool { !otherText.isEmpty }
-    /// Confirm on a multiple-choice question: something ticked, or an
-    /// "Other" answer typed.
-    var canConfirmMultiSelect: Bool {
-        !selectedIndices.isEmpty || (showOtherInput && !otherText.isEmpty)
-    }
-}
-
-enum QuestionTextMetrics {
-    /// Lines the question itself may take. At three, a question that sets out
-    /// its options first lost the actual ask ("Which approach should I
-    /// take?") to the ellipsis. The options scroll now, so the question gets
-    /// the room; the tooltip has anything past this.
-    static let lineLimit = 8
-}
-
-/// When a notch card may pull keyboard focus into its own text field (#297).
-enum NotchCardFocusPolicy {
-    /// The island is a non-activating overlay: a question card usually appears
-    /// while the user is typing in their editor, or opens under a mouse that is
-    /// only passing over to read it. Focusing the answer field then took the
-    /// keystrokes meant for the editor. Only do it when the user is already
-    /// working in the panel (it is key because they clicked into it); otherwise
-    /// the field takes focus when clicked, like any text field.
-    static func shouldFocusQuestionFieldOnAppear(panelIsKeyWindow: Bool) -> Bool {
-        panelIsKeyWindow
-    }
-}
-
-private struct QuestionBar: View {
-    let question: String
-    let options: [String]?
-    let descriptions: [String]?
-    /// All AskUserQuestion items (1-4). Empty for legacy Notification questions.
-    let allQuestions: [AskUserQuestionItem]
-    /// The `QuestionRequest` this card answers; nil for the debug preview.
-    let requestId: UUID?
-    let sessionSource: String?
-    let sessionContext: String?
-    /// Owning session, so the card can focus its terminal on click the same way
-    /// ApprovalBar does. Optional: the session may be gone while the card is
-    /// still on screen.
-    let session: SessionSnapshot?
-    let sessionId: String
-    let appState: AppState
-    let queuePosition: Int
-    let queueTotal: Int
-    let onAnswer: (String) -> Void
-    let onAnswerMulti: ([AskUserQuestionAnswer]) -> Void
-    let onSkip: () -> Void
-    /// Close the card without answering; the request keeps waiting.
-    let onDismiss: () -> Void
-
-    @FocusState private var isFocused: Bool
-
-    // Click-to-jump state, mirroring ApprovalBar
-    @State private var failureShakeOffset: CGFloat = 0
-    @State private var jumpValidationTask: Task<Void, Never>?
-    @AppStorage(SettingsKey.autoCollapseAfterSessionJump) private var autoCollapseAfterSessionJump = SettingsDefaults.autoCollapseAfterSessionJump
-    @AppStorage(SettingsKey.contentFontSize) private var contentFontSize = SettingsDefaults.contentFontSize
-
-    // Multi-question wizard state, bound to `requestId` (#333)
-    @State private var wizard = QuestionWizardState()
-    @FocusState private var otherFocused: Bool
-
-    private let cyan = Color(red: 0.4, green: 0.7, blue: 1.0)
-    /// The options never shrink below about two rows.
-    static let optionsMinimumHeight: CGFloat = 72
-
-    private var type: NotchCardTypography { NotchCardTypography(contentFontSize: contentFontSize) }
-
-    private var currentItem: AskUserQuestionItem? {
-        guard !allQuestions.isEmpty, wizard.currentQuestionIndex < allQuestions.count else { return nil }
-        return allQuestions[wizard.currentQuestionIndex]
-    }
-
-    /// Remote sessions run on another machine — there is no local terminal to
-    /// focus, so the affordance stays hidden rather than dead. Same for a
-    /// harness-hosted session (T3 Code) whose harness URL is unknown (#321).
-    private var canJumpToTerminal: Bool {
-        guard let session else { return false }
-        return session.canJumpFromNotch
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            // Session context — doubles as the click-to-jump target
-            if NotchCardContextRow.isShown(source: sessionSource, cwd: sessionContext,
-                                           canJump: canJumpToTerminal, queueTotal: queueTotal) {
-                sessionContextRow
-            }
-
-            if let item = currentItem {
-                multiQuestionContent(item)
-            } else {
-                legacyQuestionContent
-            }
-        }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 10)
-        .offset(x: failureShakeOffset)
-        .onAppear {
-            let panelIsKey = (NSApp.delegate as? AppDelegate)?.panelController?.isPanelKeyWindow ?? false
-            if NotchCardFocusPolicy.shouldFocusQuestionFieldOnAppear(panelIsKeyWindow: panelIsKey) {
-                isFocused = true
-            }
-        }
-        .onChange(of: requestId, initial: true) { _, newId in
-            // The caller keys this view by request, so a new request normally
-            // gets a fresh view; this keeps the wizard honest if it does not.
-            wizard.bind(to: newId)
-        }
-        .onDisappear {
-            jumpValidationTask?.cancel()
-            jumpValidationTask = nil
-        }
-    }
-
-    private var sessionContextRow: some View {
-        NotchCardContextRow(
-            source: sessionSource,
-            cwd: sessionContext,
-            session: session,
-            canJump: canJumpToTerminal,
-            queuePosition: queuePosition,
-            queueTotal: queueTotal,
-            type: type,
-            onJump: handleCardClick
-        )
-    }
-
-    // MARK: - Click-to-jump handling
-
-    /// Focus the terminal that asked the question. Same contract as
-    /// ApprovalBar.handleCardClick(): the question stays queued, so collapsing
-    /// after a successful jump never discards it — unlike Skip, which denies.
-    private func handleCardClick() {
-        jumpValidationTask?.cancel()
-        jumpValidationTask = startNotchCardJump(
-            kind: .question,
-            session: session,
-            sessionId: sessionId,
-            appState: appState,
-            autoCollapseAfterJump: autoCollapseAfterSessionJump,
-            shakeOffset: $failureShakeOffset
-        )
-    }
-
-    // MARK: - Shared pieces
-
-    /// "?" + optional header chip + the whole question (up to
-    /// QuestionTextMetrics.lineLimit lines; the tooltip has the rest).
-    private func questionHeader(_ text: String, header: String?, progress: String?) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: 6) {
-            Text("?")
-                .font(.system(size: type.title, weight: .bold))
-                .foregroundStyle(cyan)
-                .accessibilityHidden(true)
-            if let header, !header.isEmpty {
-                NotchCardTag(text: header, color: cyan, fontSize: type.badge)
-            }
-            Text(text)
-                .font(.system(size: type.title, weight: .medium))
-                .foregroundStyle(.white.opacity(0.92))
-                .lineLimit(QuestionTextMetrics.lineLimit)
-                .fixedSize(horizontal: false, vertical: true)
-                .help(text)
-            Spacer(minLength: 0)
-            if let progress {
-                Text(progress)
-                    .font(.system(size: type.badge, weight: .bold, design: .monospaced))
-                    .foregroundStyle(.white.opacity(0.6))
-                    .fixedSize()
-                    .padding(.horizontal, 4)
-                    .padding(.vertical, 1)
-                    .background(Color.white.opacity(0.1))
-                    .clipShape(RoundedRectangle(cornerRadius: 3))
-            }
-        }
-    }
-
-    private func answerField(_ text: Binding<String>, focus: FocusState<Bool>.Binding, onSubmit: @escaping () -> Void) -> some View {
-        HStack(spacing: 6) {
-            Text(">")
-                .font(.system(size: type.secondary, weight: .bold, design: .monospaced))
-                .foregroundStyle(Color(red: 0.3, green: 0.85, blue: 0.4))
-                .accessibilityHidden(true)
-            TextField(L10n.shared["type_answer"], text: text)
-                .textFieldStyle(.plain)
-                .font(.system(size: type.link))
-                .foregroundStyle(.white)
-                .focused(focus)
-                .onSubmit(onSubmit)
-        }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 6)
-        .background(Color.white.opacity(0.05))
-        .cornerRadius(4)
-        .overlay(
-            RoundedRectangle(cornerRadius: 4)
-                .strokeBorder(Color.white.opacity(0.1), lineWidth: 1)
-        )
-    }
-
-    /// The card's one filled button, when the question needs one: a tap on
-    /// a single-choice option already answers it.
-    private struct PrimaryAction {
-        let label: String
-        let isEnabled: Bool
-        let action: () -> Void
-    }
-
-    /// Back (later wizard steps) leading; Hide, Skip and the primary trailing
-    /// — the approval card's order, Skip standing where Deny does.
-    private func actionRow(showsBack: Bool, primary: PrimaryAction?) -> some View {
-        ViewThatFits(in: .horizontal) {
-            HStack(spacing: 8) {
-                if showsBack { backButton(expands: false) }
-                Spacer(minLength: 12)
-                trailingButtons(primary: primary, expands: false)
-            }
-            HStack(spacing: 6) {
-                if showsBack { backButton(expands: false) }
-                trailingButtons(primary: primary, expands: true)
-            }
-            .frame(minWidth: 0, idealWidth: 0, maxWidth: .infinity)
-        }
-    }
-
-    private func backButton(expands: Bool) -> some View {
-        NotchCardButton(label: L10n.shared["card_back"], role: .quiet, fontSize: type.button,
-                        expands: expands, systemImage: "chevron.left", action: goBack)
-    }
-
-    @ViewBuilder
-    private func trailingButtons(primary: PrimaryAction?, expands: Bool) -> some View {
-        NotchCardButton(label: L10n.shared["card_hide"], role: .quiet, fontSize: type.button,
-                        help: L10n.shared["dismiss_card_hint"], action: onDismiss)
-        NotchCardButton(label: L10n.shared["card_skip"], role: .secondary, fontSize: type.button,
-                        hint: CardShortcutHint.text(for: .skipQuestion),
-                        help: L10n.shared["skip_question_hint"], expands: expands, action: onSkip)
-        if let primary {
-            NotchCardButton(label: primary.label, role: .primary, fontSize: type.button,
-                            isEnabled: primary.isEnabled, expands: expands, action: primary.action)
-        }
-    }
-
-    // MARK: - Multi-question content (AskUserQuestion)
-
-    @ViewBuilder
-    private func multiQuestionContent(_ item: AskUserQuestionItem) -> some View {
-        // Header with the wizard's progress. Top-aligned: the question may wrap.
-        questionHeader(
-            item.payload.question,
-            header: item.payload.header,
-            progress: allQuestions.count > 1 ? "\(wizard.currentQuestionIndex + 1)/\(allQuestions.count)" : nil
-        )
-
-        // Options — scroll past what the window holds, so a long list never
-        // pushes "Other" and the buttons out of reach.
-        if let opts = item.payload.options, !opts.isEmpty {
-            PanelFittedScrollArea(minimumHeight: Self.optionsMinimumHeight) {
-                VStack(spacing: 4) {
-                    ForEach(Array(opts.enumerated()), id: \.offset) { idx, option in
-                        let desc = item.payload.descriptions?.indices.contains(idx) == true ? item.payload.descriptions?[idx] : nil
-                        if item.multiSelect {
-                            MultiSelectRow(index: idx + 1, label: option, description: desc,
-                                           isChecked: wizard.selectedIndices.contains(idx), accent: cyan, type: type) {
-                                if wizard.selectedIndices.contains(idx) {
-                                    wizard.selectedIndices.remove(idx)
-                                } else {
-                                    wizard.selectedIndices.insert(idx)
-                                }
-                            }
-                        } else {
-                            OptionRow(index: idx + 1, label: option, description: desc,
-                                      isSelected: wizard.selectedIndex == idx, accent: cyan, type: type) {
-                                wizard.selectedIndex = idx
-                                wizard.showOtherInput = false
-                                advanceWithAnswer(option, selectedOptions: [option])
-                            }
-                        }
-                    }
-
-                    // "Other" option
-                    otherOptionRow(isMultiSelect: item.multiSelect)
-
-                    // "Other" text input, indented under its row
-                    if wizard.showOtherInput {
-                        answerField($wizard.otherText, focus: $otherFocused) {
-                            if !item.multiSelect && wizard.canSubmitOther {
-                                advanceWithAnswer(wizard.otherText, customInput: wizard.otherText)
-                            }
-                        }
-                        .padding(.horizontal, 14)
-                        .onAppear { otherFocused = true }
-                    }
-                }
-                .padding(.horizontal, 14)
-            }
-            // The scroller runs along the panel's edge, not over the rows.
-            .padding(.horizontal, -14)
-        } else {
-            // No options — text input only
-            answerField($wizard.textInput, focus: $isFocused, onSubmit: submitFreeText)
-        }
-
-        actionRow(showsBack: wizard.currentQuestionIndex > 0, primary: primaryAction(for: item))
-    }
-
-    private func primaryAction(for item: AskUserQuestionItem) -> PrimaryAction? {
-        if item.payload.options?.isEmpty != false {
-            return PrimaryAction(label: L10n.shared["card_submit"], isEnabled: wizard.canSubmitText, action: submitFreeText)
-        }
-        if item.multiSelect {
-            return PrimaryAction(label: L10n.shared["card_confirm"], isEnabled: wizard.canConfirmMultiSelect,
-                                 action: confirmMultiSelect)
-        }
-        if wizard.showOtherInput {
-            return PrimaryAction(label: L10n.shared["card_submit"], isEnabled: wizard.canSubmitOther) {
-                if wizard.canSubmitOther { advanceWithAnswer(wizard.otherText, customInput: wizard.otherText) }
-            }
-        }
-        return nil
-    }
-
-    // MARK: - "Other" option row
-
-    @ViewBuilder
-    private func otherOptionRow(isMultiSelect: Bool) -> some View {
-        if isMultiSelect {
-            MultiSelectRow(index: -1, label: L10n.shared["other"], description: nil,
-                           isChecked: wizard.showOtherInput, accent: cyan, type: type) {
-                wizard.showOtherInput.toggle()
-                if !wizard.showOtherInput { wizard.otherText = "" }
-            }
-        } else {
-            OptionRow(index: -1, label: L10n.shared["other"], description: nil,
-                      isSelected: wizard.showOtherInput, accent: cyan, type: type) {
-                wizard.showOtherInput = true
-                wizard.selectedIndex = nil
-            }
-        }
-    }
-
-    // MARK: - Navigation
-
-    private func submitFreeText() {
-        guard let item = currentItem,
-              let answer = makeQuestionBarFreeTextAnswer(
-                  question: item.payload.question,
-                  text: wizard.textInput
-              ) else { return }
-        advance(with: answer)
-    }
-
-    private func advanceWithAnswer(
-        _ answer: String,
-        selectedOptions: [String] = [],
-        customInput: String? = nil
-    ) {
-        guard let item = currentItem else { return }
-        advance(with: AskUserQuestionAnswer(
-            question: item.payload.question,
-            answer: answer,
-            selectedOptions: selectedOptions,
-            customInput: customInput
-        ))
-    }
-
-    private func advance(with answer: AskUserQuestionAnswer) {
-        var next = wizard
-        if let submission = next.record(answer, for: requestId, questionCount: allQuestions.count) {
-            wizard = next
-            onAnswerMulti(submission)
-        } else {
-            withAnimation(NotchAnimation.micro) {
-                wizard = next
-            }
-        }
-    }
-
-    private func confirmMultiSelect() {
-        guard let item = currentItem, let opts = item.payload.options else { return }
-        let selectedOptions = wizard.selectedIndices.sorted().compactMap { idx in
-            opts.indices.contains(idx) ? opts[idx] : nil
-        }
-        let customInput = wizard.showOtherInput && !wizard.otherText.isEmpty ? wizard.otherText : nil
-        let parts = selectedOptions + (customInput.map { [$0] } ?? [])
-        guard !parts.isEmpty else { return }
-        advanceWithAnswer(
-            parts.joined(separator: ", "),
-            selectedOptions: selectedOptions,
-            customInput: customInput
-        )
-    }
-
-    private func goBack() {
-        withAnimation(NotchAnimation.micro) {
-            wizard.goBack()
-        }
-    }
-
-    // MARK: - Legacy single-question content (Notification-based)
-
-    @ViewBuilder
-    private var legacyQuestionContent: some View {
-        questionHeader(question, header: nil, progress: nil)
-
-        if let options = options, !options.isEmpty {
-            PanelFittedScrollArea(minimumHeight: Self.optionsMinimumHeight) {
-                VStack(spacing: 4) {
-                    ForEach(Array(options.enumerated()), id: \.offset) { idx, option in
-                        let desc = descriptions?.indices.contains(idx) == true ? descriptions?[idx] : nil
-                        OptionRow(index: idx + 1, label: option, description: desc,
-                                  isSelected: wizard.selectedIndex == idx, accent: cyan, type: type) {
-                            wizard.selectedIndex = idx
-                            onAnswer(option)
-                        }
-                    }
-                }
-                .padding(.horizontal, 14)
-            }
-            .padding(.horizontal, -14)
-            actionRow(showsBack: false, primary: nil)
-        } else {
-            answerField($wizard.textInput, focus: $isFocused) {
-                if wizard.canSubmitText { onAnswer(wizard.textInput) }
-            }
-            actionRow(showsBack: false, primary: PrimaryAction(
-                label: L10n.shared["card_submit"], isEnabled: wizard.canSubmitText
-            ) {
-                if wizard.canSubmitText { onAnswer(wizard.textInput) }
-            })
-        }
-    }
-}
-
-// MARK: - Multi-Select Row (checkbox style)
-
-private struct MultiSelectRow: View {
-    let index: Int
-    let label: String
-    let description: String?
-    let isChecked: Bool
-    let accent: Color
-    let type: NotchCardTypography
-    let action: () -> Void
-    @State private var hovering = false
-
-    var body: some View {
-        Button(action: action) {
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
-                Image(systemName: isChecked ? "checkmark.square.fill" : "square")
-                    .font(.system(size: type.body))
-                    .foregroundStyle(isChecked ? accent : .white.opacity(0.55))
-                    .frame(width: type.body + 3)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(label)
-                        .font(.system(size: type.body, weight: hovering || isChecked ? .semibold : .regular))
-                        .foregroundStyle(.white.opacity(hovering || isChecked ? 1 : 0.8))
-                    if let description, !description.isEmpty {
-                        Text(description)
-                            .font(.system(size: type.caption))
-                            .foregroundStyle(.white.opacity(0.58))
-                            .lineLimit(2)
-                    }
-                }
-                Spacer()
-            }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 7)
-            .background(
-                RoundedRectangle(cornerRadius: 4)
-                    .fill(isChecked ? accent.opacity(0.08) : (hovering ? Color.white.opacity(0.08) : Color.white.opacity(0.03)))
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 4)
-                    .strokeBorder(isChecked ? accent.opacity(0.4) : (hovering ? accent.opacity(0.2) : Color.clear), lineWidth: 1)
-            )
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .onHover { h in withAnimation(NotchAnimation.micro) { hovering = h } }
-        .accessibilityAddTraits(isChecked ? .isSelected : [])
-    }
-}
-
-// MARK: - Option Row
-
-private struct OptionRow: View {
-    let index: Int
-    let label: String
-    let description: String?
-    let isSelected: Bool
-    let accent: Color
-    let type: NotchCardTypography
-    let action: () -> Void
-    @State private var hovering = false
-
-    var body: some View {
-        Button(action: action) {
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
-                // Selector arrow
-                Text(hovering ? "▸" : " ")
-                    .font(.system(size: type.caption, weight: .bold))
-                    .foregroundStyle(accent)
-                    .frame(width: 10)
-                    .accessibilityHidden(true)
-                // Number (or ellipsis for "Other"), in a fixed column so the
-                // labels line up whatever the digit ("1." is narrower than
-                // "2.", "10." wider still).
-                Text(index > 0 ? "\(index)." : "…")
-                    .font(.system(size: type.secondary, weight: .semibold))
-                    .foregroundStyle(accent.opacity(hovering ? 1 : 0.8))
-                    .frame(minWidth: (type.secondary * 1.8).rounded(), alignment: .trailing)
-                // Label + Description
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(label)
-                        .font(.system(size: type.body, weight: hovering ? .semibold : .regular))
-                        .foregroundStyle(.white.opacity(hovering ? 1 : 0.8))
-                    if let description, !description.isEmpty {
-                        Text(description)
-                            .font(.system(size: type.caption))
-                            .foregroundStyle(.white.opacity(0.58))
-                            .lineLimit(2)
-                    }
-                }
-                Spacer()
-            }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 7)
-            .background(
-                RoundedRectangle(cornerRadius: 4)
-                    .fill(hovering ? Color.white.opacity(0.08) : Color.white.opacity(0.03))
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 4)
-                    .strokeBorder(hovering ? accent.opacity(0.4) : Color.clear, lineWidth: 1)
-            )
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .onHover { h in withAnimation(NotchAnimation.micro) { hovering = h } }
-        .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 }
 
@@ -3884,7 +2277,7 @@ func shouldTriggerJumpFailureFeedback(_ jumpChecks: [Bool]) -> Bool {
     !jumpChecks.contains(true)
 }
 
-/// Namespace for jump animation utilities shared between ApprovalBar and SessionCard
+/// Namespace for the session card's jump animation utilities
 enum JumpAnimationHelper {
     static let shakeSequence = [8, -8, 6, -6, 3, -3, 0]
     static let shakeStepDuration: UInt64 = 35_000_000
@@ -3921,125 +2314,6 @@ func evaluateJumpValidation(
     return isCancelled() ? .cancelled : .failed
 }
 
-/// Which notch card a click-to-jump was started from.
-///
-/// The jump validation runs asynchronously, so by the time it lands the panel
-/// may already be showing a different card. Collapsing on a surface the jump
-/// did not originate from would discard a live card the user never touched —
-/// the same class of cross-card mix-up as #308.
-enum NotchCardKind: Equatable {
-    case approval
-    case question
-
-    /// Is `surface` still the card this jump started from?
-    func matches(_ surface: IslandSurface) -> Bool {
-        switch (self, surface) {
-        case (.approval, .approvalCard), (.question, .questionCard):
-            return true
-        default:
-            return false
-        }
-    }
-}
-
-/// Retry schedule for checking whether a click-to-jump actually landed.
-let sessionJumpValidationDelays: [UInt64] = [120_000_000, 320_000_000, 640_000_000]
-
-/// Did the terminal owning `session` come to the front?
-func sessionJumpSucceeded(_ session: SessionSnapshot) async -> Bool {
-    await withCheckedContinuation { continuation in
-        DispatchQueue.global(qos: .userInitiated).async {
-            let succeeded = TerminalVisibilityDetector.isSessionTabVisible(session)
-                || TerminalVisibilityDetector.isTerminalFrontmostForSession(session)
-            continuation.resume(returning: succeeded)
-        }
-    }
-}
-
-/// Shared click-to-jump driver for the notch cards (approval + question).
-///
-/// Both cards behave identically on click: activate the owning terminal, then
-/// poll a few times to see whether the jump landed — collapsing the notch on
-/// success, error sound + shake on failure. Only the surface allowed to
-/// collapse differs, which is what `kind` selects.
-///
-/// Returns the validation task so the caller can cancel it on disappear, or
-/// nil when there is nothing to validate.
-func startNotchCardJump(
-    kind: NotchCardKind,
-    session: SessionSnapshot?,
-    sessionId: String,
-    appState: AppState,
-    autoCollapseAfterJump: Bool,
-    shakeOffset: Binding<CGFloat>,
-    delays: [UInt64] = sessionJumpValidationDelays
-) -> Task<Void, Never>? {
-    // Session may be nil if it was removed while the card is still visible
-    guard let session else {
-        return Task { @MainActor in
-            SoundManager.shared.preview("8bit_error")
-            await JumpAnimationHelper.runShake(offset: shakeOffset)
-        }
-    }
-
-    // Remote sessions have no local terminal to focus; an unverified harness
-    // (T3 Code server whose URL is unknown) has nowhere to go either.
-    guard session.canJumpFromNotch else { return nil }
-
-    TerminalActivator.activate(session: session, sessionId: sessionId)
-
-    guard autoCollapseAfterJump else { return nil }
-
-    // Validate jump: retry 3x with increasing delays (120ms, 320ms, 640ms)
-    // Collapse on success; play error sound + shake on failure
-    return Task {
-        let outcome = await evaluateJumpValidation(
-            delays: delays,
-            checkSucceeded: { await sessionJumpSucceeded(session) }
-        )
-
-        switch outcome {
-        case .success:
-            guard !Task.isCancelled else { return }
-            // Auto-collapse to collapsed surface on successful jump
-            await MainActor.run {
-                guard kind.matches(appState.surface) else { return }
-                withAnimation(NotchAnimation.close) {
-                    appState.surface = .collapsed
-                }
-            }
-        case .failed:
-            guard !Task.isCancelled else { return }
-            await MainActor.run {
-                SoundManager.shared.preview("8bit_error")
-            }
-            guard !Task.isCancelled else { return }
-            await JumpAnimationHelper.runShake(offset: shakeOffset)
-        case .cancelled:
-            return
-        }
-    }
-}
-
-enum ApprovalInlineSummary: Equatable {
-    case text(String)
-    case bashCommand(String)
-}
-
-func approvalInlineSummary(tool: String, toolDescription: String?, toolInput: [String: Any]?) -> ApprovalInlineSummary? {
-    let desc = toolDescription?.trimmingCharacters(in: .whitespacesAndNewlines)
-    if let desc, !desc.isEmpty {
-        return .text(desc)
-    }
-    if tool == "Bash", let cmd = toolInput?["command"] as? String {
-        let trimmed = cmd.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !trimmed.isEmpty {
-            return .bashCommand(trimmed)
-        }
-    }
-    return nil
-}
-
 private struct SessionCard: View {
     var appState: AppState
     let sessionId: String
@@ -4052,7 +2326,6 @@ private struct SessionCard: View {
     @State private var hovering = false
     @State private var failureShakeOffset: CGFloat = 0
     @State private var jumpValidationTask: Task<Void, Never>?
-    @State private var showApprovalDetails = false
     @AppStorage(SettingsKey.contentFontSize) private var contentFontSize = SettingsDefaults.contentFontSize
     @AppStorage(SettingsKey.aiMessageLines) private var aiMessageLines = SettingsDefaults.aiMessageLines
     @AppStorage(SettingsKey.showAgentDetails) private var showAgentDetails = SettingsDefaults.showAgentDetails
@@ -4063,24 +2336,10 @@ private struct SessionCard: View {
     @AppStorage(SettingsKey.showProjectName) private var showProjectName = SettingsDefaults.showProjectName
     private var fontSize: CGFloat { CGFloat(contentFontSize) }
     private var aiLineLimit: Int? { aiMessageLines > 0 ? aiMessageLines : nil }
-    private var approvalQueueIndex: Int? {
-        appState.permissionQueue.firstIndex { ($0.event.sessionId ?? "default") == sessionId }
-    }
-    private var isActiveApproval: Bool { approvalQueueIndex == 0 }
     /// Cursor is blocked on a question answered inside its own UI (#265) —
     /// a display-only wait with no in-panel answer flow.
     private var showsExternalCursorQuestion: Bool {
         session.status == .waitingQuestion && session.cursorPendingQuestion != nil
-    }
-    /// A question waiting on this session that is not on screen (auto-expand
-    /// off, Smart Suppress, or queued behind another card): the card itself
-    /// cannot answer it, so it offers the way to its card rather than only a
-    /// jump to the terminal.
-    private var showsQuestionWaitingRow: Bool {
-        session.status == .waitingQuestion
-            && !showsExternalCursorQuestion
-            && appState.pendingQuestion(forSession: sessionId) != nil
-            && appState.surface.questionSessionId != sessionId
     }
     private var cardStatus: SessionCardStatus { SessionCardStatus(session) }
     /// The completion card is a full card whatever the density.
@@ -4102,7 +2361,6 @@ private struct SessionCard: View {
             return session.currentTool.map(LiveRow.tool) ?? .thinking
         case .needsYou:
             guard !showsExternalCursorQuestion,
-                  !(session.status == .waitingApproval && approvalQueueIndex != nil),
                   let tool = session.currentTool else { return nil }
             return .tool(tool)
         case .done, .idle, .stopped, .error:
@@ -4137,11 +2395,6 @@ private struct SessionCard: View {
             VStack(alignment: .leading, spacing: 5) {
                 comfortableHeader
 
-                // Inline approval controls (when user keeps panel in session list)
-                if session.status == .waitingApproval, let idx = approvalQueueIndex {
-                    approvalBlock(queueIndex: idx)
-                }
-
                 if showsExternalCursorQuestion {
                     cursorQuestionBlock
                 }
@@ -4149,10 +2402,6 @@ private struct SessionCard: View {
                 // Agent checklist progress (TaskCreate / TodoWrite / update_plan).
                 if showTaskProgress && !session.agentTasks.isEmpty {
                     AgentTaskProgressView(tasks: session.agentTasks, fontSize: fontSize, agentIsIdle: session.status == .idle)
-                }
-
-                if showsQuestionWaitingRow {
-                    questionWaitingRow
                 }
 
                 // Session title: first user prompt (hide when detailed mode shows chat history)
@@ -4190,7 +2439,7 @@ private struct SessionCard: View {
     /// Character + subagent icons.
     private var mascotColumn: some View {
         VStack(spacing: 3) {
-            MascotView(source: session.mascotSource, status: session.status, size: 32)
+            MascotView(source: session.mascotSource, size: 32)
             if showAgentDetails && !session.subagents.isEmpty {
                 let sorted = session.subagents.values.sorted { $0.startTime < $1.startTime }
                 // Grid: 4 per row, 8px icons
@@ -4308,117 +2557,7 @@ private struct SessionCard: View {
         }
     }
 
-    // MARK: Requests (approval, questions)
-
-    /// The waiting approval: what it wants to run, and the actions — in the
-    /// approval card's order, so a hand that learned one finds the same
-    /// button in the same place on the other.
-    @ViewBuilder
-    private func approvalBlock(queueIndex idx: Int) -> some View {
-        // Approval details require the provider's raw tool name; the
-        // session itself may hold a friendly Codex activity label.
-        let event = appState.permissionQueue[idx].event
-        let tool = event.toolName ?? session.currentTool ?? "Unknown"
-        let input = event.toolInput
-        approvalRequestLine(tool: tool, input: input, position: idx + 1, total: appState.permissionQueue.count)
-        inlineApprovalActions(tool: tool, event: event)
-
-        // Expanded detail view
-        if showApprovalDetails {
-            ApprovalToolDetailView(tool: tool, toolInput: input, maxLines: 6)
-                .padding(.horizontal, 10)
-                .padding(.vertical, 8)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(
-                    RoundedRectangle(cornerRadius: 8)
-                        .fill(Color.white.opacity(0.05))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 8)
-                                .strokeBorder(Color.white.opacity(0.10), lineWidth: 1)
-                        )
-                )
-        }
-    }
-
-    /// `▸ Bash  python scripts/backfill.py …   2/3` — always one line, so
-    /// the list keeps the approval's context without opening Details.
-    private func approvalRequestLine(tool: String, input: [String: Any]?, position: Int, total: Int) -> some View {
-        let summary = Self.summaryText(approvalInlineSummary(tool: tool, toolDescription: session.toolDescription, toolInput: input))
-        return HStack(alignment: .center, spacing: 6) {
-            SessionToolChip(tool: tool, color: SessionCardStatus.needsYou.color, fontSize: fontSize)
-            if let summary {
-                Text(summary)
-                    .font(.system(size: fontSize, design: .monospaced))
-                    .foregroundStyle(.white.opacity(0.82))
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-            }
-            Spacer(minLength: 4)
-            if total > 1 {
-                Text("\(position)/\(total)")
-                    .font(.system(size: max(9, fontSize - 2), weight: .bold, design: .monospaced))
-                    .foregroundStyle(.white.opacity(0.62))
-                    .padding(.horizontal, 4)
-                    .padding(.vertical, 1)
-                    .background(RoundedRectangle(cornerRadius: 3).fill(Color.white.opacity(0.1)))
-                    .fixedSize()
-            }
-        }
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel(
-            String(format: L10n.shared["approval_queue_label"], position, total, tool)
-                + (summary.map { ", \($0)" } ?? "")
-        )
-    }
-
-    private static func summaryText(_ summary: ApprovalInlineSummary?) -> String? {
-        switch summary {
-        case .text(let text): return text
-        case .bashCommand(let command): return command
-        case nil: return nil
-        }
-    }
-
-    /// Always (a link that names its scope) … Details · Deny · Allow once.
-    /// Allow once is the only filled button. Only the head of the queue can
-    /// be answered from here; the others say why their buttons are dim.
-    private func inlineApprovalActions(tool: String, event: HookEvent) -> some View {
-        let enabled = isActiveApproval
-        let queuedHint = enabled ? nil : L10n.shared["session_inline_queued_hint"]
-        return HStack(spacing: 8) {
-            SessionInlineButton(
-                title: String(format: L10n.shared["session_inline_always"], ToolNameDisplay.compact(tool)),
-                style: .link,
-                fontSize: buttonFontSize,
-                enabled: enabled,
-                help: queuedHint ?? ApprovalHints.always(savesRule: CodexPermissionRules.isCodexEvent(event)),
-                action: { appState.approvePermission(always: true, expectedSessionId: sessionId) }
-            )
-            Spacer(minLength: 8)
-            SessionInlineButton(
-                title: showApprovalDetails ? L10n.shared["approval_details_collapse"] : L10n.shared["approval_details_expand"],
-                style: .quiet,
-                fontSize: buttonFontSize,
-                action: { withAnimation(NotchAnimation.micro) { showApprovalDetails.toggle() } }
-            )
-            SessionInlineButton(
-                title: L10n.shared["session_inline_deny"],
-                style: .destructive,
-                fontSize: buttonFontSize,
-                enabled: enabled,
-                help: queuedHint,
-                action: { appState.denyPermission(expectedSessionId: sessionId) }
-            )
-            SessionInlineButton(
-                title: L10n.shared["session_inline_allow_once"],
-                style: .primary,
-                fontSize: buttonFontSize,
-                enabled: enabled,
-                help: queuedHint,
-                action: { appState.approvePermission(always: false, expectedSessionId: sessionId) }
-            )
-        }
-    }
+    // MARK: Requests
 
     /// Cursor asked a question in its own UI (#265). There is no hook
     /// channel to answer from here, so show the question plus a hint
@@ -4443,32 +2582,13 @@ private struct SessionCard: View {
         }
     }
 
-    private var questionWaitingRow: some View {
-        HStack(spacing: 8) {
-            Text(L10n.shared["question_waiting_inline"])
-                .font(.system(size: fontSize, weight: .medium, design: .monospaced))
-                .foregroundStyle(SessionCardStatus.needsYou.color.opacity(0.85))
-                .lineLimit(1)
-            Spacer(minLength: 8)
-            SessionInlineButton(
-                title: L10n.shared["question_answer"],
-                style: .primary,
-                fontSize: buttonFontSize,
-                action: { appState.openPendingQuestionCard(sessionId: sessionId) }
-            )
-        }
-    }
-
     // MARK: Compact row
 
     /// Opens up under the row only for a session that needs you, and only
     /// when there is something to show there.
     private var compactExpands: Bool {
         guard cardStatus == .needsYou else { return false }
-        return (session.status == .waitingApproval && approvalQueueIndex != nil)
-            || showsExternalCursorQuestion
-            || showsQuestionWaitingRow
-            || session.currentTool != nil
+        return showsExternalCursorQuestion || session.currentTool != nil
     }
 
     private var compactBody: some View {
@@ -4476,7 +2596,7 @@ private struct SessionCard: View {
         let expands = compactExpands
         return VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 8) {
-                MascotView(source: session.mascotSource, status: session.status, size: 18)
+                MascotView(source: session.mascotSource, size: 18)
                     .frame(width: 22)
                 Text(session.headline(showProjectName: showProjectName).text)
                     .font(.system(size: fontSize, weight: .bold, design: .monospaced))
@@ -4550,12 +2670,8 @@ private struct SessionCard: View {
 
     @ViewBuilder
     private var compactRequest: some View {
-        if session.status == .waitingApproval, let idx = approvalQueueIndex {
-            approvalBlock(queueIndex: idx)
-        } else if showsExternalCursorQuestion {
+        if showsExternalCursorQuestion {
             cursorQuestionBlock
-        } else if showsQuestionWaitingRow {
-            questionWaitingRow
         } else if let tool = session.currentTool {
             HStack(spacing: 6) {
                 SessionToolChip(tool: tool, color: SessionCardStatus.needsYou.color, fontSize: fontSize)
@@ -4788,88 +2904,6 @@ private struct SessionGlyphLine: View {
             }
         }
         .frame(width: SessionGlyph.columnWidth(fontSize))
-    }
-}
-
-/// The session card's inline buttons, in the approval card's hierarchy:
-/// one filled primary, an outlined destructive, quiet secondaries and a
-/// link. At least 24pt tall.
-private struct SessionInlineButton: View {
-    enum Style {
-        /// Filled green — the one action the row leads with.
-        case primary
-        /// Outlined red.
-        case destructive
-        /// Low-key fill (Details).
-        case quiet
-        /// Underlined text (Always allow …): gives way first when the row is tight.
-        case link
-    }
-
-    // The approval card's colours (white on either green ≥ 4.5:1).
-    static let primaryFill = Color(red: 0.16, green: 0.50, blue: 0.24)
-    static let primaryHover = Color(red: 0.17, green: 0.53, blue: 0.26)
-    static let destructive = Color(red: 0.92, green: 0.38, blue: 0.38)
-    static let link = Color(red: 0.45, green: 0.72, blue: 1.0)
-    /// A little under the card's 26pt — the row sits inside a list.
-    static let minHeight: CGFloat = 24
-
-    let title: String
-    let style: Style
-    let fontSize: CGFloat
-    var enabled = true
-    var help: String? = nil
-    let action: () -> Void
-    @State private var hovering = false
-
-    var body: some View {
-        Button(action: action) { label }
-            .buttonStyle(.plain)
-            .disabled(!enabled)
-            .help(help ?? "")
-            .onHover { hovering = $0 }
-    }
-
-    @ViewBuilder
-    private var label: some View {
-        let text = Text(title)
-            .font(.system(size: fontSize, weight: .semibold))
-            .lineLimit(1)
-        let shape = RoundedRectangle(cornerRadius: 6)
-        let lit = hovering && enabled
-        switch style {
-        case .primary:
-            text
-                .foregroundStyle(.white.opacity(enabled ? 1 : 0.6))
-                .fixedSize()
-                .padding(.horizontal, 12)
-                .frame(minHeight: Self.minHeight)
-                .background(shape.fill((lit ? Self.primaryHover : Self.primaryFill).opacity(enabled ? 1 : 0.4)))
-        case .destructive:
-            text
-                .foregroundStyle(Self.destructive.opacity(enabled ? 1 : 0.5))
-                .fixedSize()
-                .padding(.horizontal, 10)
-                .frame(minHeight: Self.minHeight)
-                .background(shape.fill(Self.destructive.opacity(lit ? 0.14 : 0)))
-                .overlay(shape.strokeBorder(Self.destructive.opacity(enabled ? (lit ? 0.9 : 0.7) : 0.3), lineWidth: 1))
-        case .quiet:
-            text
-                .foregroundStyle(.white.opacity(enabled ? 0.85 : 0.5))
-                .fixedSize()
-                .padding(.horizontal, 10)
-                .frame(minHeight: Self.minHeight)
-                .background(shape.fill(Color.white.opacity(lit ? 0.14 : 0.08)))
-        case .link:
-            Text(title)
-                .font(.system(size: fontSize - 0.5, weight: .medium))
-                .underline()
-                .lineLimit(1)
-                .truncationMode(.tail)
-                .foregroundStyle(Self.link.opacity(enabled ? (lit ? 1 : 0.9) : 0.5))
-                .frame(minHeight: Self.minHeight)
-                .contentShape(Rectangle())
-        }
     }
 }
 

@@ -266,7 +266,6 @@ class PanelWindowController: NSObject, NSWindowDelegate {
         setupHorizontalDragMonitor()
         updatePosition()
         panel.orderFrontRegardless()
-        MascotAnimationGate.shared.setPanelVisible(true)
 
         // Screen change observer
         NotificationCenter.default.addObserver(
@@ -333,11 +332,6 @@ class PanelWindowController: NSObject, NSWindowDelegate {
         globalClickMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] event in
             Task { @MainActor in
                 guard let self = self, self.appState.surface.isExpanded else { return }
-                // Don't close during approval/question
-                switch self.appState.surface {
-                case .approvalCard, .questionCard: return
-                default: break
-                }
                 // Don't collapse if click is within the panel frame (event leaked on external display)
                 if let panelFrame = self.panel?.frame {
                     let clickLocation = NSEvent.mouseLocation
@@ -638,30 +632,17 @@ class PanelWindowController: NSObject, NSWindowDelegate {
         let settings = SettingsManager.shared
         if settings.hideInFullscreen && fullscreenLatch {
             panel.orderOut(nil)
-            MascotAnimationGate.shared.setPanelVisible(false)
             return
         }
 
         if settings.hideWhenNoSession && appState.activeSessionCount == 0 {
             panel.orderOut(nil)
-            MascotAnimationGate.shared.setPanelVisible(false)
             return
         }
 
         if !panel.isVisible {
             panel.orderFrontRegardless()
         }
-        MascotAnimationGate.shared.setPanelVisible(true)
-        MascotAnimationGate.shared.setIdleSettled(isIslandSettled())
-    }
-
-    /// Collapsed island with nothing running — the state a Mac spends most of
-    /// its day in, and the one where a live mascot timeline costs real CPU for
-    /// motion nobody is looking at (#299). Any expanded surface, or any session
-    /// that is not idle, keeps the mascot animating.
-    private func isIslandSettled() -> Bool {
-        guard !appState.surface.isExpanded else { return false }
-        return appState.sessions.values.allSatisfy { $0.status == .idle }
     }
 
     private func isActiveSpaceFullscreen() -> Bool {

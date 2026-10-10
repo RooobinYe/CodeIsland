@@ -2617,14 +2617,8 @@ struct ConfigInstaller {
     // understand, so those generic helpers apply unchanged to the `events`
     // sub-dict. The event-name schema is STRICT: any key outside
     // `zcodeAllowedEvents` silently drops the WHOLE `hooks` config on load —
-    // never write outside that whitelist. Hook OUTPUT is equally strict
-    // (Zod .strict() in the kernel): a PermissionRequest decision must be
-    // exactly {behavior, permissionUpdates?/updatedInput?} or
-    // {behavior: "deny", interrupt?, message?} — Claude's
-    // `updatedPermissions`/`destination` keys fail validation and the whole
-    // decision is discarded (ZCode then shows its own dialog). See
-    // AppState.zcodeAlwaysAllowResponse for the always-allow shape. No
-    // hot-reload; a ZCode restart is required after any config.json edit.
+    // never write outside that whitelist. No hot-reload; a ZCode restart is
+    // required after any config.json edit.
 
     /// The only 7 event names ZCode's schema accepts. Writing anything else
     /// causes the entire `hooks` config to be silently discarded on load —

@@ -25,7 +25,7 @@ struct TerminalVisibilityDetector {
     // MARK: - Probe (what callers consult)
 
     /// The two checks as one swappable pair. Every caller — Smart Suppress,
-    /// follow-up reminders, jump validation, the question card — goes through
+    /// follow-up reminders, jump validation — goes through
     /// `probe`, so a test process never reads the real frontmost app or scripts
     /// the terminal of whoever runs the suite: it gets `.unknown` unless a test
     /// installs its own answer.

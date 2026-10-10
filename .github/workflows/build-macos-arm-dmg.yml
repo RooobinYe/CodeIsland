@@ -141,10 +141,8 @@ jobs:
         run: |
           APP_ARCHS="$(lipo -archs .build/dmg-staging/CodeIsland.app/Contents/MacOS/CodeIsland)"
           HELPER_ARCHS="$(lipo -archs .build/dmg-staging/CodeIsland.app/Contents/Helpers/codeisland-bridge)"
-          SPARKLE_ARCHS="$(lipo -archs .build/dmg-staging/CodeIsland.app/Contents/Frameworks/Sparkle.framework/Sparkle)"
           test "$APP_ARCHS" = "arm64"
           test "$HELPER_ARCHS" = "arm64"
-          test "$SPARKLE_ARCHS" = "arm64"
           test -s .build/dmg-staging/CodeIsland.app/Contents/Resources/AppIcon.icns
           test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIconFile' .build/dmg-staging/CodeIsland.app/Contents/Info.plist)" = "AppIcon"
           codesign --verify --deep --strict --verbose=2 .build/dmg-staging/CodeIsland.app

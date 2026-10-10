@@ -117,16 +117,12 @@ enum SessionCardStatus: Equatable, CaseIterable {
 
 // MARK: - Ordering
 
-/// The expanded list's order: sessions that need you first (in the order
-/// their requests queued, so the one the buttons act on leads), then the
-/// ones working (newest session first — a working session's activity changes
+/// The expanded list's order: sessions that need you first (most recent
+/// first), then the ones working (newest session first — a working session's activity changes
 /// every few seconds, and sorting on it would shuffle the cards constantly),
 /// then the rest by most recent activity.
 enum SessionListOrdering {
-    static func order(
-        _ sessions: [String: SessionSnapshot],
-        requestRank: [String: Int] = [:]
-    ) -> [String] {
+    static func order(_ sessions: [String: SessionSnapshot]) -> [String] {
         let tiers = sessions.mapValues { SessionCardStatus($0).tier }
         return sessions.keys.sorted { a, b in
             guard let sa = sessions[a], let sb = sessions[b] else { return a < b }
@@ -134,8 +130,6 @@ enum SessionListOrdering {
             if ta != tb { return ta < tb }
             switch ta {
             case 0:
-                let ra = requestRank[a] ?? Int.max, rb = requestRank[b] ?? Int.max
-                if ra != rb { return ra < rb }
                 if sa.lastActivity != sb.lastActivity { return sa.lastActivity > sb.lastActivity }
             case 1:
                 if sa.startTime != sb.startTime { return sa.startTime > sb.startTime }
@@ -144,16 +138,6 @@ enum SessionListOrdering {
             }
             return a < b
         }
-    }
-
-    /// Request queue position per session: approvals (they hold a tool call)
-    /// before questions, each in arrival order.
-    static func requestRank(permissionSessionIds: [String], questionSessionIds: [String]) -> [String: Int] {
-        var rank: [String: Int] = [:]
-        for (index, id) in (permissionSessionIds + questionSessionIds).enumerated() where rank[id] == nil {
-            rank[id] = index
-        }
-        return rank
     }
 }
 
@@ -242,11 +226,7 @@ struct SessionOrderFreeze: Equatable {
 extension AppState {
     /// Session ids in the expanded list's live (unfrozen) order.
     func sessionListOrder() -> [String] {
-        let rank = SessionListOrdering.requestRank(
-            permissionSessionIds: permissionQueue.map { $0.event.sessionId ?? "default" },
-            questionSessionIds: questionQueue.map { $0.event.sessionId ?? "default" }
-        )
-        return SessionListOrdering.order(sessions, requestRank: rank)
+        SessionListOrdering.order(sessions)
     }
 }
 

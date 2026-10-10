@@ -2,8 +2,7 @@ import Foundation
 import CodeIslandCore
 
 /// Push notifications, fed from the same places that drive the island:
-/// the permission / question queues and the completion effect. Content is
-/// built from what those queues hold, never re-guessed from raw hook JSON.
+/// display-only waits and the completion effect.
 extension AppState {
     /// Who a session's pushes are about — the labels its card shows.
     func pushSubject(for sessionId: String) -> PushSubject {
@@ -16,76 +15,7 @@ extension AppState {
         )
     }
 
-    /// A permission request was just queued. `smartSuppressed` is evaluated
-    /// only when a push is actually on the table.
-    func pushPermissionQueued(_ event: HookEvent, sessionId: String, smartSuppressed: @autoclosure () -> Bool) {
-        let notifier = PushNotifier.shared
-        guard notifier.isEnabled else { return }
-        notifier.notify(
-            Self.pushContent(forPermission: event, cwd: sessions[sessionId]?.cwd),
-            subject: pushSubject(for: sessionId),
-            smartSuppressed: smartSuppressed(),
-            request: pushRequest(forPermission: event, sessionId: sessionId)
-        )
-    }
-
-    /// A question (hook Notification, AskUserQuestion, Codex app-server) was just queued.
-    func pushQuestionQueued(_ request: QuestionRequest, sessionId: String, smartSuppressed: @autoclosure () -> Bool) {
-        let notifier = PushNotifier.shared
-        guard notifier.isEnabled else { return }
-        notifier.notify(
-            Self.pushContent(forQuestion: request),
-            subject: pushSubject(for: sessionId),
-            smartSuppressed: smartSuppressed(),
-            request: pushRequest(forQuestion: request, sessionId: sessionId)
-        )
-    }
-
     // MARK: Request identity
-
-    /// Which approval / question a push is about: the tool call id when the
-    /// agent sends one, else a fingerprint of what is asked — so a replayed
-    /// hook is the same request and a new one in the same session is not.
-    nonisolated static func pushRequestKey(toolUseId: String?, asking content: PushContent) -> String {
-        if let id = toolUseId?.trimmingCharacters(in: .whitespacesAndNewlines), !id.isEmpty {
-            return "id:\(id)"
-        }
-        return "ask:\(content.hashValue)"
-    }
-
-    /// Fingerprinted without the session's cwd, which can still arrive after
-    /// the request did.
-    nonisolated static func pushRequestKey(forPermission event: HookEvent) -> String {
-        pushRequestKey(toolUseId: event.toolUseId, asking: pushContent(forPermission: event, cwd: nil))
-    }
-
-    static func pushRequestKey(forQuestion request: QuestionRequest) -> String {
-        pushRequestKey(toolUseId: request.event.toolUseId, asking: pushContent(forQuestion: request))
-    }
-
-    /// A queued approval, found again by identity until it leaves the queue.
-    func pushRequest(forPermission event: HookEvent, sessionId: String) -> PushPendingRequest {
-        let key = Self.pushRequestKey(forPermission: event)
-        return PushPendingRequest(key: key) { [weak self] in
-            guard let self,
-                  let queued = self.permissionQueue.first(where: {
-                      ($0.event.sessionId ?? "default") == sessionId && Self.pushRequestKey(forPermission: $0.event) == key
-                  }) else { return nil }
-            return Self.pushContent(forPermission: queued.event, cwd: self.sessions[sessionId]?.cwd)
-        }
-    }
-
-    /// A queued question, found again by identity until it leaves the queue.
-    func pushRequest(forQuestion request: QuestionRequest, sessionId: String) -> PushPendingRequest {
-        let key = Self.pushRequestKey(forQuestion: request)
-        return PushPendingRequest(key: key) { [weak self] in
-            guard let self,
-                  let queued = self.questionQueue.first(where: {
-                      ($0.event.sessionId ?? "default") == sessionId && Self.pushRequestKey(forQuestion: $0) == key
-                  }) else { return nil }
-            return Self.pushContent(forQuestion: queued)
-        }
-    }
 
     /// A display-only wait, identified by what it asks: the same wait asking
     /// something else (Claude Desktop's next card) is a new request.
@@ -180,9 +110,8 @@ extension AppState {
         }
     }
 
-    /// A follow-up reminder came due. It is rebuilt from the queue, so it
-    /// carries the same command / question and options as the first push,
-    /// plus how long it has been waiting.
+    /// A follow-up reminder came due. It carries the same command / question
+    /// as the first push, plus how long it has been waiting.
     ///
     /// - `.deferred`: the Mac held its own reminder back (locked, screen
     ///   saver, quiet hours) — the moment a phone matters most.
@@ -201,25 +130,13 @@ extension AppState {
         if reminder.delivery == .catchUp { return .skipped(.userPresent) }
         let sessionId = reminder.sessionId
         let pending: PushContent
-        // Approvals and questions come from the queue, or — for a display-only
-        // wait — from what the wait asked, with where to answer it.
+        // Approvals and questions: what the wait asked, with where to answer it.
         switch reminder.kind {
-        case .approval:
-            if let request = pendingPermission(forSession: sessionId) {
-                pending = Self.pushContent(forPermission: request.event, cwd: sessions[sessionId]?.cwd)
-            } else if let waiting = displayOnlyWaitPushContent(forSession: sessionId, kind: .approval) {
-                pending = waiting
-            } else {
+        case .approval, .question:
+            guard let waiting = displayOnlyWaitPushContent(forSession: sessionId, kind: reminder.kind) else {
                 return .skipped(.nothingPending)
             }
-        case .question:
-            if let request = pendingQuestion(forSession: sessionId) {
-                pending = Self.pushContent(forQuestion: request)
-            } else if let waiting = displayOnlyWaitPushContent(forSession: sessionId, kind: .question) {
-                pending = waiting
-            } else {
-                return .skipped(.nothingPending)
-            }
+            pending = waiting
         case .completion:
             // One nudge for a finished turn nobody looked at. If the turn's own
             // completion push reached the phone, the nudge would only repeat
@@ -251,18 +168,6 @@ extension AppState {
                 fallback: event.toolDescription,
                 cwd: cwd
             )
-        )
-    }
-
-    /// Every question of a wizard (AskUserQuestion, Codex requestUserInput),
-    /// not just the one on screen, so the user can think them all over.
-    static func pushContent(forQuestion request: QuestionRequest) -> PushContent {
-        let payloads = request.askUserQuestionState?.items.map(\.payload) ?? [request.question]
-        return .question(
-            items: payloads.map {
-                PushQuestionItem(question: $0.question, options: $0.options ?? [], header: $0.header)
-            },
-            isSecret: payloads.contains { $0.isSecret }
         )
     }
 

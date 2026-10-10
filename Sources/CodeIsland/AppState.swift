@@ -117,26 +117,6 @@ final class AppState {
 
     var sessions: [String: SessionSnapshot] = [:]
     var activeSessionId: String?
-    var permissionQueue: [PermissionRequest] = [] {
-        didSet {
-            followUps.waitingChanged()
-            PushNotifier.shared.requestsChanged()
-        }
-    }
-    var questionQueue: [QuestionRequest] = [] {
-        didSet {
-            // A close lasts as long as its request: once answered, skipped or
-            // drained, its id is forgotten.
-            if !dismissedQuestionIds.isEmpty {
-                let queued = Set(questionQueue.map(\.id))
-                if !dismissedQuestionIds.isSubset(of: queued) {
-                    dismissedQuestionIds.formIntersection(queued)
-                }
-            }
-            followUps.waitingChanged()
-            PushNotifier.shared.requestsChanged()
-        }
-    }
     /// Follow-up reminders for waiting approvals / questions and unseen
     /// completions. Holds no entries and arms no timer while the setting is off.
     @ObservationIgnored
@@ -150,9 +130,6 @@ final class AppState {
     private(set) var recentHookEvents: [DiagnosticHookEvent] = []
     @ObservationIgnored
     private let maxRecentHookEvents = 100
-    @ObservationIgnored
-    var questionTerminalFrontmostDetector: (SessionSnapshot) -> Bool =
-        TerminalVisibilityDetector.isTerminalFrontmostForSession
 
     func recordHookEvent(
         source: String?,
@@ -177,10 +154,6 @@ final class AppState {
             recentHookEvents.removeFirst(recentHookEvents.count - maxRecentHookEvents)
         }
     }
-    /// Cache of in-flight PreToolUse records keyed by tool_use_id. Used to correlate
-    /// permission requests back to their originating tool call. See AppState+ToolUseCache.
-    @ObservationIgnored
-    var pendingToolUses: [String: PreToolUseRecord] = [:]
     /// Records the transcript path currently watched for each session so we only
     /// reattach when the path actually changes. See AppState+TranscriptTailer.
     @ObservationIgnored
@@ -261,33 +234,6 @@ final class AppState {
     @ObservationIgnored
     var claudeDesktopTerminationObserver: NSObjectProtocol?
 
-    /// Computed: first item in permission queue (backward compat for UI reads)
-    var pendingPermission: PermissionRequest? { permissionQueue.first }
-    /// Computed: first item in question queue
-    var pendingQuestion: QuestionRequest? { questionQueue.first }
-
-    /// The queued request belonging to a specific session. A card is addressed
-    /// by session, so it must render (and resolve) that session's request
-    /// rather than whatever currently sits at the head of the queue. (#308)
-    func pendingPermission(forSession sessionId: String) -> PermissionRequest? {
-        permissionQueue.first { ($0.event.sessionId ?? "default") == sessionId }
-    }
-
-    func pendingQuestion(forSession sessionId: String) -> QuestionRequest? {
-        questionQueue.first { ($0.event.sessionId ?? "default") == sessionId }
-    }
-
-    /// 1-based position for a card's "N of M" label. The card may be showing a
-    /// request that is not the head, so the position has to be looked up. (#308)
-    func permissionQueuePosition(forSession sessionId: String) -> Int {
-        (permissionQueue.firstIndex { ($0.event.sessionId ?? "default") == sessionId } ?? 0) + 1
-    }
-
-    func questionQueuePosition(forSession sessionId: String) -> Int {
-        (questionQueue.firstIndex { ($0.event.sessionId ?? "default") == sessionId } ?? 0) + 1
-    }
-    /// Preview-only: mock question payload for DebugHarness (no continuation needed)
-    var previewQuestionPayload: QuestionPayload?
     var surface: IslandSurface = .collapsed {
         didSet {
             // Any expansion counts as "seen" for the glance completion dot.
@@ -304,37 +250,7 @@ final class AppState {
             if surface != oldValue {
                 followUps.surfaceChanged(surface)
             }
-            switch surface {
-            case .approvalCard(let sid): cardRequestId = pendingPermission(forSession: sid)?.id
-            case .questionCard(let sid): cardRequestId = pendingQuestion(forSession: sid)?.id
-            case .collapsed, .sessionList, .completionCard: cardRequestId = nil
-            }
         }
-    }
-
-    /// The request the approval / question card on screen was opened for.
-    /// While that very request still waits, re-evaluating the queue leaves
-    /// the card alone — it may be one the user picked that is not the head.
-    /// Once it is answered, the session's next request filling the same card
-    /// is weighed like any other.
-    @ObservationIgnored
-    private var cardRequestId: UUID?
-
-    /// Index of the approval the card on screen still shows, when it is
-    /// still waiting and visible.
-    private var shownApprovalIndex: Int? {
-        guard let cardRequestId, case .approvalCard(let sid) = surface,
-              !dismissedPermissionSessionIds.contains(sid),
-              pendingPermission(forSession: sid)?.id == cardRequestId else { return nil }
-        return permissionQueue.firstIndex { $0.id == cardRequestId }
-    }
-
-    /// The session of the question card on screen, when the question it was
-    /// opened for still waits.
-    private var shownQuestionSessionId: String? {
-        guard let cardRequestId, case .questionCard(let sid) = surface,
-              pendingQuestion(forSession: sid)?.id == cardRequestId else { return nil }
-        return sid
     }
 
     /// Local-transcript token usage shown in the session-list footer.
@@ -410,13 +326,6 @@ final class AppState {
         if case .completionCard = surface { return true }
         return false
     }
-    /// True when an interactive card (approval or question) is visible — completions must queue.
-    private var isShowingInteractive: Bool {
-        switch surface {
-        case .approvalCard, .questionCard: return true
-        default: return false
-        }
-    }
     private var modelReadRetryAt: [String: Date] = [:]
     /// Per parent session → subagent id: the subagent's own model/effort once
     /// read from its transcript, and the reads still trying to find it.
@@ -427,73 +336,6 @@ final class AppState {
     /// Per local Hermes session: the read of Hermes's own store in progress.
     @ObservationIgnored
     var hermesStoreReads: [String: HermesStoreRead] = [:]
-
-    private var dismissedPermissionSessionIds: Set<String> = [] {
-        didSet { followUps.waitingChanged() }
-    }
-    private func nextVisiblePermissionIndex() -> Int? {
-        permissionQueue.firstIndex { request in
-            let sid = request.event.sessionId ?? "default"
-            return !dismissedPermissionSessionIds.contains(sid)
-        }
-    }
-
-    /// Sessions whose approval is still waiting on the user: queued and not
-    /// dismissed. Dismissing hides a request without dequeuing it (#309), so
-    /// the queue alone would keep reminding about a prompt the user hid.
-    var visiblePermissionSessionIds: Set<String> {
-        Set(permissionQueue.map { $0.event.sessionId ?? "default" })
-            .subtracting(dismissedPermissionSessionIds)
-    }
-
-    /// The request each of those sessions' approval card shows — its first
-    /// queued one — by session. Follow-up reminders belong to that request.
-    var visiblePermissionRequestIds: [String: String] {
-        var ids: [String: String] = [:]
-        for request in permissionQueue {
-            let sid = request.event.sessionId ?? "default"
-            guard ids[sid] == nil, !dismissedPermissionSessionIds.contains(sid) else { continue }
-            ids[sid] = request.id.uuidString
-        }
-        return ids
-    }
-
-    /// Question requests the user closed without answering. Unlike approvals
-    /// these are keyed by request, not session: a new question from the same
-    /// session is a new thing to see. Hidden, never resolved — the agent keeps
-    /// waiting, and the collapsed bar's question badge reopens the card.
-    private(set) var dismissedQuestionIds: Set<UUID> = [] {
-        didSet { followUps.waitingChanged() }
-    }
-
-    /// The question each session's card shows — its first queued one — in
-    /// queue order, for the sessions whose card the user has not closed. That
-    /// first question decides: a later one from the same session (a
-    /// subagent's) waits behind a closed card instead of reopening it on the
-    /// question the user just put away.
-    private var visibleQuestionCards: [QuestionRequest] {
-        var seen = Set<String>()
-        return questionQueue.filter { request in
-            seen.insert(request.event.sessionId ?? "default").inserted
-                && !dismissedQuestionIds.contains(request.id)
-        }
-    }
-
-    /// The first question whose card the user has not closed — what may open
-    /// by itself, and what a question shortcut acts on.
-    var nextVisibleQuestion: QuestionRequest? {
-        visibleQuestionCards.first
-    }
-
-    /// Question counterpart of `visiblePermissionRequestIds`: closed cards are
-    /// left out, so follow-up reminders stop for a card the user put away.
-    var pendingQuestionRequestIds: [String: String] {
-        var ids: [String: String] = [:]
-        for request in visibleQuestionCards {
-            ids[request.event.sessionId ?? "default"] = request.id.uuidString
-        }
-        return ids
-    }
 
     var rotatingSessionId: String?
     var rotatingSession: SessionSnapshot? {
@@ -749,9 +591,6 @@ final class AppState {
             removeSession(key)
         }
 
-        // 5. Reclaim memory for abandoned tool_use_id cache entries.
-        prunePendingToolUses()
-
         refreshDerivedState()
     }
 
@@ -990,9 +829,6 @@ final class AppState {
             sessions[sessionId]?.status = .idle
             sessions[sessionId]?.currentTool = nil
             sessions[sessionId]?.toolDescription = nil
-            // Drain any pending permissions/questions — the process is gone
-            drainPermissions(forSession: sessionId, reason: "process-exited")
-            drainQuestions(forSession: sessionId, reason: "process-exited")
             refreshDerivedState()
         }
 
@@ -1038,27 +874,19 @@ final class AppState {
         processMonitors.removeValue(forKey: sessionId)
     }
 
-    /// Remove a session, clean up its monitor, and resume any pending continuations.
-    /// Every removal path (cleanup timer, process exit, reducer effect) goes through here
-    /// so leaked continuations / connections are impossible.
+    /// Remove a session and clean up its monitor. Every removal path (cleanup
+    /// timer, process exit, reducer effect) goes through here.
     func removeSession(_ sessionId: String) {
         let displayOnlyWaitBefore = displayOnlyWaitKind(forSession: sessionId)
-        // Resume ALL pending continuations for this session
-        drainPermissions(forSession: sessionId, reason: "removeSession")
-        drainQuestions(forSession: sessionId, reason: "removeSession")
 
         completionQueue.removeAll { $0 == sessionId }
         if surface.sessionId == sessionId {
+            // The turn on this card belongs to a session that is going
+            // away: nothing is left on it to read, pointer on it or not.
             autoCollapseTask?.cancel()
-            if case .completionCard = surface {
-                // The turn on this card belongs to a session that is going
-                // away: nothing is left on it to read, pointer on it or not.
-                completionHasBeenEntered = false
-                deferCollapseOnMouseLeave = false
-                showNextCompletionOrCollapse()
-            } else {
-                _ = showNextPending()
-            }
+            completionHasBeenEntered = false
+            deferCollapseOnMouseLeave = false
+            showNextCompletionOrCollapse()
         }
         sessions.removeValue(forKey: sessionId)
         noteDisplayOnlyWait(sessionId: sessionId, was: displayOnlyWaitBefore)
@@ -1153,8 +981,6 @@ final class AppState {
         } else {
             rotatingSessionId = cachedActiveIds.first
         }
-        ESP32StatePublisher.shared.notifyDirty()
-        AppleCompanionPublisher.shared.notifyDirty()
     }
 
     /// Start monitoring the CLI process for a session.
@@ -1315,7 +1141,7 @@ final class AppState {
         // Don't queue duplicates
         if completionQueue.contains(sessionId) || justCompletedSessionId == sessionId { return }
 
-        if isShowingCompletion || isShowingInteractive {
+        if isShowingCompletion {
             // Already showing one — queue this for later
             completionQueue.append(sessionId)
         } else {
@@ -1441,54 +1267,6 @@ final class AppState {
         return kind.hasPrefix("auth")
     }
 
-    /// Whether a permission request may expand the island on its own. Smart
-    /// Suppress only covers "the agent's own terminal is in front"; users who
-    /// work in a *different* app still got the panel thrown in their face on
-    /// every approval. With this off the sound and the session-list badge still
-    /// fire and the card is one click away, but focus is never stolen. (#292)
-    static func autoExpandOnPermission(_ defaults: UserDefaults = .standard) -> Bool {
-        guard defaults.object(forKey: SettingsKey.autoExpandOnPermission) != nil else {
-            return SettingsDefaults.autoExpandOnPermission
-        }
-        return defaults.bool(forKey: SettingsKey.autoExpandOnPermission)
-    }
-
-    /// The question counterpart of `autoExpandOnPermission`. Questions never
-    /// honoured that switch — an AskUserQuestion card opened even when the
-    /// user had asked the island not to steal focus. With this off the sound
-    /// still plays, the collapsed bar shows a question badge, and one click
-    /// (on the bar, or "Answer" in the session list) opens the card.
-    static func autoExpandOnQuestion(_ defaults: UserDefaults = .standard) -> Bool {
-        guard defaults.object(forKey: SettingsKey.autoExpandOnQuestion) != nil else {
-            return SettingsDefaults.autoExpandOnQuestion
-        }
-        return defaults.bool(forKey: SettingsKey.autoExpandOnQuestion)
-    }
-
-    /// Session of a queued question the island is not showing — what the
-    /// collapsed bar's question badge advertises and a click opens.
-    var hiddenPendingQuestionSessionId: String? {
-        // A question still waiting to be seen comes before one the user closed.
-        guard let head = nextVisibleQuestion ?? questionQueue.first else { return nil }
-        if case .questionCard = surface { return nil }
-        return head.event.sessionId ?? "default"
-    }
-
-    /// Open the card for a pending question on an explicit user action (a click
-    /// on the collapsed bar, "Answer" in the session list). Never gated by
-    /// auto-expand or Smart Suppress: those only decide what opens *by itself*.
-    func openPendingQuestionCard(sessionId: String? = nil) {
-        guard let sid = sessionId ?? hiddenPendingQuestionSessionId,
-              let request = pendingQuestion(forSession: sid) else { return }
-        // Opening it again takes back a close: it is on screen, so it may
-        // stay up and remind like any other waiting question.
-        dismissedQuestionIds.remove(request.id)
-        activeSessionId = sid
-        withAnimation(NotchAnimation.open) {
-            surface = .questionCard(sessionId: sid)
-        }
-    }
-
     func shouldAutoOpenPendingSurface(
         for sessionId: String,
         isTerminalFrontmost: (SessionSnapshot) -> Bool = TerminalVisibilityDetector.isTerminalFrontmostForSession
@@ -1497,26 +1275,6 @@ final class AppState {
         guard let session = sessions[sessionId],
               (session.termApp != nil || session.termBundleId != nil) else { return true }
         return !isTerminalFrontmost(session)
-    }
-
-    /// Smart Suppress for a question: may its card open by itself, as far as
-    /// "is the user already looking at the agent" goes? The "auto-expand on
-    /// question" switch is a separate, UI-only choice checked where the card
-    /// opens; folded in here, it read as "the user is looking" to anything
-    /// else that asked (the AskUserQuestion push once did).
-    private func shouldAutoOpenQuestionSurface(for event: HookEvent) -> Bool {
-        let source = SessionSnapshot.normalizedSupportedSource(event.rawJSON["_source"] as? String)
-        let nativeAskIsRacing = event.rawJSON["_codeisland_native_ask_racing"] as? Bool == true
-        // Marker-enabled OMP explicitly guarantees that its native ask dialog
-        // races CodeIsland. Pi and legacy OMP block here, so hiding their card deadlocks.
-        if event.toolName == "AskUserQuestion",
-           (source != "pi" || !nativeAskIsRacing) {
-            return true
-        }
-        return shouldAutoOpenPendingSurface(
-            for: event.sessionId ?? "default",
-            isTerminalFrontmost: questionTerminalFrontmostDetector
-        )
     }
 
     private func showCompletion(_ sessionId: String) {
@@ -1533,13 +1291,8 @@ final class AppState {
             let tabVisible = TerminalVisibilityDetector.isSessionTabVisible(sessionCopy)
             await MainActor.run { [weak self] in
                 guard let self else { return }
-                // Verify state hasn't changed while we were checking
-                // (e.g. approval/question card popped up, session was removed)
+                // Verify the session wasn't removed while we were checking
                 guard self.sessions[sessionId] != nil else { return }
-                switch self.surface {
-                case .approvalCard, .questionCard: return  // don't overwrite higher-priority surfaces
-                default: break
-                }
                 if !tabVisible {
                     withAnimation(NotchAnimation.pop) {
                         self.doShowCompletion(sessionId)
@@ -1576,8 +1329,8 @@ final class AppState {
             deferCollapseOnMouseLeave = true
             return
         }
-        // Interactive items first, then the next finished turn, then collapse.
-        if showNextPending() || showNextQueuedCompletion() { return }
+        // The next finished turn, then collapse.
+        if showNextQueuedCompletion() { return }
         withAnimation(NotchAnimation.close) {
             surface = .collapsed
         }
@@ -1585,33 +1338,15 @@ final class AppState {
 
     // Cached derived state (refreshed by refreshDerivedState after session mutations)
     private(set) var status: AgentStatus = .idle
-    private(set) var primarySource: String = "claude"
     private(set) var activeSessionCount: Int = 0
     private(set) var totalSessionCount: Int = 0
 
     var currentTool: String? {
-        // When approvals/questions are pending, always reflect the *front of the queue*.
-        // Otherwise a second incoming request can overwrite session.currentTool and make
-        // the first pending item appear to “disappear” in compact UI.
-        if let pending = pendingPermission {
-            return pending.event.toolName
-        }
-        if pendingQuestion != nil {
-            // AskUserQuestion arrives via PermissionRequest tool.
-            return "AskUserQuestion"
-        }
         guard let id = activeSessionId, let s = sessions[id] else { return nil }
         return s.currentTool
     }
 
     var toolDescription: String? {
-        if let pending = pendingPermission {
-            let sessionId = pending.event.sessionId ?? activeSessionId ?? "default"
-            return pending.event.toolDescription ?? sessions[sessionId]?.toolDescription
-        }
-        if let q = pendingQuestion {
-            return q.question.question
-        }
         guard let id = activeSessionId, let s = sessions[id] else { return nil }
         return s.toolDescription
     }
@@ -1631,25 +1366,10 @@ final class AppState {
     /// Call after any mutation to `sessions` or session status.
     func refreshDerivedState() {
         let summary = deriveSessionSummary(from: sessions)
-        // Whenever no session is actively working, honor the user-configured
-        // default mascot. Covers both "no sessions at all" (#102) and "all
-        // sessions idle" (#149) — without this, a user who sets the default
-        // to Codex still sees Claude every time their last session goes idle
-        // because deriveSessionSummary echoes the most recently active source.
-        // Active work always wins (running / processing / waiting* status).
-        let effectiveSource: String
-        if summary.status == .idle {
-            effectiveSource = SettingsManager.shared.defaultSource
-        } else {
-            effectiveSource = summary.primarySource
-        }
         // Only assign when changed (avoids unnecessary @Observable notifications)
         if status != summary.status { status = summary.status }
-        if primarySource != effectiveSource { primarySource = effectiveSource }
         if activeSessionCount != summary.activeSessionCount { activeSessionCount = summary.activeSessionCount }
         if totalSessionCount != summary.totalSessionCount { totalSessionCount = summary.totalSessionCount }
-        ESP32StatePublisher.shared.notifyDirty()
-        AppleCompanionPublisher.shared.notifyDirty()
     }
 
     private func refreshProviderTitle(for trackedSessionId: String, providerSessionId: String? = nil) {
@@ -1746,15 +1466,6 @@ final class AppState {
         let displayOnlyWaitBefore = displayOnlyWaitKind(forSession: sessionId)
         let cwdBeforeReduce = sessions[sessionId]?.cwd
 
-        // Cache PreToolUse payloads so downstream events sharing tool_use_id can be
-        // correlated, and drain queue entries whose agent already moved on.
-        cachePreToolUseIfApplicable(event)
-        resolveToolUseIfCompleted(event)
-        // #216: permission requests with no correlatable tool_use_id can't be drained by
-        // resolveToolUseIfCompleted. A follow-up activity event means the user already
-        // approved in the terminal — resume those (and only those) as approved.
-        resolveOrphanPermissionsOnActivity(event)
-
         let effects = reduceEvent(sessions: &sessions, event: event, maxHistory: maxHistory,
                                   replyCompletePlaceholder: L10n.shared["reply_complete_placeholder"])
 
@@ -1790,41 +1501,20 @@ final class AppState {
             requestHermesStoreRead(for: sessionId, event: event)
         }
 
-        // Session was waiting and got an activity event. Historically we'd
-        // blanket-drain the whole queue here, assuming the user answered in the
-        // terminal. That heuristic misfires for parallel MCP / plugin tool calls:
-        // an unrelated PostToolUse / Stop / etc. would deny pending permissions
-        // for *other* in-flight tools (#147).
-        //
-        // The right signal that a specific permission is moot is its tool_use_id
-        // showing up in PostToolUse / PostToolUseFailure / PermissionDenied —
-        // resolveToolUseIfCompleted already does that surgically above. We keep
-        // the question-queue drain (questions don't carry tool_use_id reliably
-        // and are rare enough that a blanket sweep is acceptable) and refresh
-        // session status, but never drain unrelated permission requests.
-        //
-        // The sweep only covers questions asked by the same agent as the event.
-        // Background subagents share the parent's session_id, so their tool
-        // calls and SubagentStop kept arriving while the main thread's question
-        // was on screen and denied it ("Permission denied by hook").
+        // A session blocked on the user (answering in the agent's own UI)
+        // moves on once any activity event arrives after the prompt.
         if wasWaiting {
             let keepWaiting: Set<String> = ["Notification", "SessionStart", "SessionEnd", "PreCompact"]
-            if !keepWaiting.contains(normalizedEventName) {
-                drainQuestions(
-                    forSession: sessionId,
-                    reason: "wasWaiting-blanket-drain-event=\(normalizedEventName)",
-                    where: { $0.agentId == event.agentId }
+            if !keepWaiting.contains(normalizedEventName),
+               sessions[sessionId]?.status == .waitingApproval
+                || sessions[sessionId]?.status == .waitingQuestion {
+                resolveMergedSubagentAfterUI(
+                    sessionId: sessionId,
+                    agentId: event.agentId,
+                    subagentStatus: .processing,
+                    keepSubagentTool: nil,
+                    idleParentWhenNoAgent: normalizedEventName == "Stop"
                 )
-                let stillHasPermission = permissionQueue.contains { $0.event.sessionId == sessionId }
-                let stillHasQuestion = questionQueue.contains { $0.event.sessionId == sessionId }
-                if !stillHasPermission && !stillHasQuestion,
-                   sessions[sessionId]?.status == .waitingApproval
-                    || sessions[sessionId]?.status == .waitingQuestion {
-                    sessions[sessionId]?.status = (normalizedEventName == "Stop") ? .idle : .processing
-                    sessions[sessionId]?.currentTool = nil
-                    sessions[sessionId]?.toolDescription = nil
-                }
-                showNextPending()
             }
         }
 
@@ -1870,16 +1560,77 @@ final class AppState {
         }
 
         // A terminal permission prompt announced by a Notification waits
-        // display-only until the next activity event clears it.
+        // until the next activity event clears it.
         noteDisplayOnlyWait(
             sessionId: sessionId,
             was: displayOnlyWaitBefore,
-            asking: Self.displayOnlyWaitAsk(forHookEvent: event, normalizedEventName: normalizedEventName)
+            asking: Self.displayOnlyWaitAsk(forHookEvent: event, normalizedEventName: normalizedEventName),
+            announce: true
         )
 
         scheduleSave()
         startRotationIfNeeded()
         refreshDerivedState()
+    }
+
+    /// A hook that would block on the user: a PermissionRequest (AskUserQuestion
+    /// included) or a question Notification. The island never answers it — the
+    /// hook returns at once and the agent asks in its own UI — it only shows
+    /// the session as blocked until the next activity event.
+    func handleBlockingRequest(_ event: HookEvent, status: AgentStatus) {
+        let sessionId = event.sessionId ?? "default"
+        if sessions[sessionId] == nil {
+            sessions[sessionId] = SessionSnapshot()
+        }
+        // Subagent events are routed through the parent session ID; their full
+        // metadata can describe the child session, so they only fill gaps.
+        if event.agentId == nil {
+            extractMetadata(into: &sessions, sessionId: sessionId, event: event)
+        } else {
+            fillMissingParentMetadataFromSubagentEvent(into: &sessions, sessionId: sessionId, event: event)
+        }
+        tryMonitorSession(sessionId)
+        guard !shouldSuppressClosedSubagentUI(sessionId: sessionId, agentId: event.agentId) else { return }
+
+        let before = displayOnlyWaitKind(forSession: sessionId)
+        sessions[sessionId]?.status = status
+        sessions[sessionId]?.currentTool = event.activityLabel
+        sessions[sessionId]?.toolDescription = event.toolDescription
+        sessions[sessionId]?.lastActivity = Date()
+        markMergedSubagentWaiting(sessionId: sessionId, agentId: event.agentId, status: status)
+        noteDisplayOnlyWait(
+            sessionId: sessionId,
+            was: before,
+            asking: Self.blockingRequestAsk(event, status: status, cwd: sessions[sessionId]?.cwd),
+            announce: true
+        )
+        if before == nil {
+            SoundManager.shared.handleEvent("PermissionRequest")
+        }
+        scheduleSave()
+        refreshDerivedState()
+    }
+
+    /// What a blocking hook asks, for its push.
+    nonisolated static func blockingRequestAsk(_ event: HookEvent, status: AgentStatus, cwd: String?) -> PushContent? {
+        guard status == .waitingQuestion else {
+            return pushContent(forPermission: event, cwd: cwd)
+        }
+        if let questions = event.toolInput?["questions"] as? [[String: Any]] {
+            let items = questions.compactMap { q -> PushQuestionItem? in
+                guard let text = q["question"] as? String, !text.isEmpty else { return nil }
+                let options = (q["options"] as? [Any])?.compactMap { option -> String? in
+                    (option as? [String: Any])?["label"] as? String ?? option as? String
+                } ?? []
+                return PushQuestionItem(question: text, options: options, header: q["header"] as? String)
+            }
+            if !items.isEmpty { return .question(items: items, isSecret: false) }
+        }
+        guard let payload = QuestionPayload.from(event: event) else { return nil }
+        return .question(
+            items: [PushQuestionItem(question: payload.question, options: payload.options ?? [], header: payload.header)],
+            isSecret: payload.isSecret
+        )
     }
 
     /// Grok's TUI switches the session it hosts in place (`/resume`, `/new`, a
@@ -1921,9 +1672,7 @@ final class AppState {
                 candidateId: key,
                 started: started,
                 startedId: sessionId
-            ),
-            !permissionQueue.contains(where: { ($0.event.sessionId ?? "default") == key }),
-            !questionQueue.contains(where: { ($0.event.sessionId ?? "default") == key }) else {
+            ) else {
                 return nil
             }
             return key
@@ -2004,321 +1753,6 @@ final class AppState {
         }
     }
 
-    func handlePermissionRequest(_ event: HookEvent, continuation: CheckedContinuation<Data, Never>) {
-        let sessionId = event.sessionId ?? "default"
-        if sessions[sessionId] == nil {
-            sessions[sessionId] = SessionSnapshot()
-        }
-        // Extract metadata so blocking-first parent sessions have cwd/source/PID.
-        // Subagent events are routed through the parent session ID; their full metadata
-        // can describe the child session and should not overwrite the parent — only fill gaps.
-        if event.agentId == nil {
-            extractMetadata(into: &sessions, sessionId: sessionId, event: event)
-        } else {
-            fillMissingParentMetadataFromSubagentEvent(into: &sessions, sessionId: sessionId, event: event)
-        }
-        tryMonitorSession(sessionId)
-
-        // Closed Task/subagent ids must not surface new permission UI (parity with
-        // ensureSubagent refusing late tool hooks after Stop).
-        if shouldSuppressClosedSubagentUI(sessionId: sessionId, agentId: event.agentId) {
-            let denyResponse = Data(
-                #"{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decision":{"behavior":"deny"}}}"#.utf8
-            )
-            continuation.resume(returning: denyResponse)
-            return
-        }
-
-        // Clear any pending questions from THIS agent (mutually exclusive within an agent;
-        // a background subagent's request must not deny the main thread's question)
-        drainQuestions(forSession: sessionId, reason: "newPermissionRequest", where: { $0.agentId == event.agentId })
-
-        sessions[sessionId]?.status = .waitingApproval
-        sessions[sessionId]?.currentTool = event.activityLabel
-        sessions[sessionId]?.toolDescription = event.toolDescription
-        sessions[sessionId]?.lastActivity = Date()
-        markMergedSubagentWaiting(sessionId: sessionId, agentId: event.agentId, status: .waitingApproval)
-        // Backfill tool name/description from cached PreToolUse when the payload is thin.
-        enrichPermissionRequestFromCache(sessionId: sessionId, event: event)
-
-        let request = PermissionRequest(event: event, continuation: continuation)
-
-        // Replay deduplication: if the same tool_use_id is already queued, swap the
-        // continuation in place and deny the previous waiter. Preserves card order.
-        if mergeDuplicatePermissionRequest(request) {
-            refreshDerivedState()
-            return
-        }
-
-        // A genuinely new request means this session needs a user decision again,
-        // so it stops being dismissed. This must come AFTER the replay-dedup
-        // return above: a replay is the same decision arriving twice, not a new
-        // one, and un-dismissing on a replay resurrects the request the user
-        // hid — which then takes the card the arriving session should have got
-        // and, counting as a burst already in progress, silences its sound too.
-        // (A same-id request with different tool inputs is a distinct request,
-        // not a replay — merge returns false for those, so they still land here.)
-        dismissedPermissionSessionIds.remove(sessionId)
-
-        // Dismissing hides a request but deliberately leaves it queued, so the
-        // CLI stays blocked and the prompt stays recoverable. Gating on
-        // `permissionQueue.count == 1` therefore swallowed every later request —
-        // from any session — for as long as a dismissed one sat in the queue.
-        //
-        // The gate's real question is "is an approval card on screen", so ask
-        // the surface. Queue-derived proxies do not survive the un-dismiss
-        // above: a session's own next request clears its dismissal, which makes
-        // its still-queued earlier request count as visible again while nothing
-        // is displayed — silencing every later request all over again. (#309)
-        //
-        // ponytail: a card suppressed by Smart Suppress also leaves a visible
-        // request undisplayed, so a second session's request still waits behind
-        // it. That is pre-existing (`main` behaves the same) and needs
-        // showNextPending to skip un-openable entries; tracked separately.
-        //
-        // The surface alone is not enough either: `drainPermissions` empties one
-        // SESSION's requests without clearing `surface`, so a card can be left
-        // pointing at a session that has nothing queued. Ask per session, not
-        // per queue — a whole-queue test (`!permissionQueue.isEmpty`) reads as
-        // "a card is up" whenever some other session is still waiting, which
-        // leaves the panel showing a card for a session with no pending request
-        // while later requests queue silently behind it.
-        let approvalCardOnScreen: Bool
-        if case .approvalCard(let shownSessionId) = surface,
-           permissionQueue.contains(where: { ($0.event.sessionId ?? "default") == shownSessionId }) {
-            approvalCardOnScreen = true
-        } else {
-            approvalCardOnScreen = false
-        }
-
-        // Card and sound answer different questions and must not share a gate.
-        // The sound marks the start of a burst of approvals, which is what
-        // `count == 1` used to approximate; within a burst it stays quiet, and
-        // a dismissed request sitting in the queue must not count as a burst
-        // already in progress.
-        let burstAlreadyInProgress = nextVisiblePermissionIndex() != nil
-        permissionQueue.append(request)
-        pushPermissionQueued(event, sessionId: sessionId, smartSuppressed: !shouldAutoOpenPendingSurface(for: sessionId))
-
-        // Show UI only when no approval card is already up to be stolen from.
-        // showNextPending picks the first *visible* request, promotes it to the
-        // head and applies the session-list / Smart Suppress rules — pointing
-        // the card at this session by hand would show the dismissed request's
-        // content whenever a dismissed entry still leads the queue.
-        if !approvalCardOnScreen {
-            showNextPending()
-        }
-        if !burstAlreadyInProgress {
-            SoundManager.shared.handleEvent("PermissionRequest")
-        }
-        refreshDerivedState()
-    }
-
-    /// Index of the queued request the user actually acted on.
-    ///
-    /// The card on screen is identified by its session, but the answer used to
-    /// be applied to `queue.removeFirst()`. Anything that mutates the head
-    /// while a card is open — a peer disconnect draining another session, a
-    /// stale tool-use eviction, the reorder in `showNextPending()` — would then
-    /// resolve whichever request happened to be first, delivering the answer to
-    /// the wrong CLI. Callers that know which session the card belongs to pass
-    /// it in; `nil` keeps the head-of-queue behaviour for surfaces that only
-    /// ever mirror the head (the hardware Buddy, a companion command that names
-    /// no session). (#308)
-    private func permissionIndex(expecting expected: String?) -> Int? {
-        guard let expected else { return permissionQueue.isEmpty ? nil : 0 }
-        return permissionQueue.firstIndex { ($0.event.sessionId ?? "default") == expected }
-    }
-
-    /// Question-queue counterpart of `permissionIndex(expecting:)`. (#308)
-    private func questionIndex(expecting expected: String?) -> Int? {
-        guard let expected else { return questionQueue.isEmpty ? nil : 0 }
-        return questionQueue.firstIndex { ($0.event.sessionId ?? "default") == expected }
-    }
-
-    /// The request the card was showing is no longer queued (answered in the
-    /// terminal, drained on disconnect). `showNextPending()` drops the dead card
-    /// and re-opens whatever is genuinely waiting. (#308)
-    private func discardStalePanelAction(expected: String, kind: String) {
-        log.notice("⚠️ ignored \(kind, privacy: .public) for session=\(expected, privacy: .public) — request no longer queued")
-        showNextPending()
-        refreshDerivedState()
-    }
-
-    func approvePermission(always: Bool = false, expectedSessionId: String? = nil) {
-        guard let index = permissionIndex(expecting: expectedSessionId) else {
-            if let expectedSessionId {
-                discardStalePanelAction(expected: expectedSessionId, kind: "approve")
-            }
-            return
-        }
-        let pending = permissionQueue.remove(at: index)
-        let sessionId = pending.event.sessionId ?? "default"
-        dismissedPermissionSessionIds.remove(sessionId)
-        let responseData: Data
-        if always, CodexPermissionRules.isCodexEvent(pending.event) {
-            _ = CodexPermissionRules().persistAlwaysAllowRule(for: pending.event)
-            let response = #"{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decision":{"behavior":"allow"}}}"#
-            responseData = Data(response.utf8)
-        } else if always, Self.isZcodeEvent(pending.event) {
-            responseData = Self.zcodeAlwaysAllowResponse(toolName: pending.event.toolName)
-        } else if always {
-            let toolName = pending.event.toolName ?? ""
-            // MCP tools (`mcp__server__tool`) don't accept a rule specifier — the
-            // rule must be the bare tool name. Sending `ruleContent: "*"` makes
-            // Claude Code assemble `mcp__server__tool(*)`, which never matches an
-            // actual MCP call, so the "always allow" rule silently fails to
-            // persist and the same approval keeps re-prompting. Non-MCP tools
-            // (Bash/Read/Edit/…) keep the `*` specifier. (#224)
-            var rule: [String: Any] = ["toolName": toolName]
-            if !toolName.hasPrefix("mcp__") {
-                rule["ruleContent"] = "*"
-            }
-            let obj: [String: Any] = [
-                "hookSpecificOutput": [
-                    "hookEventName": "PermissionRequest",
-                    "decision": [
-                        "behavior": "allow",
-                        "updatedPermissions": [[
-                            "type": "addRules",
-                            "rules": [rule],
-                            "behavior": "allow",
-                            "destination": "session"
-                        ]]
-                    ] as [String: Any]
-                ] as [String: Any]
-            ]
-            responseData = (try? JSONSerialization.data(withJSONObject: obj)) ?? Data("{}".utf8)
-        } else {
-            let response = #"{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decision":{"behavior":"allow"}}}"#
-            responseData = Data(response.utf8)
-        }
-        pending.continuation.resume(returning: responseData)
-        resolveMergedSubagentAfterUI(
-            sessionId: sessionId,
-            agentId: pending.event.agentId,
-            subagentStatus: .running,
-            keepSubagentTool: pending.event.toolName,
-            idleParentWhenNoAgent: false
-        )
-
-        showNextPending()
-        refreshDerivedState()
-    }
-
-    nonisolated static func isZcodeEvent(_ event: HookEvent) -> Bool {
-        SessionSnapshot.normalizedSupportedSource(event.rawJSON["_source"] as? String) == "zcode"
-    }
-
-    nonisolated static func isQoderEvent(_ event: HookEvent) -> Bool {
-        guard let source = SessionSnapshot.normalizedSupportedSource(event.rawJSON["_source"] as? String) else { return false }
-        return source == "qoder" || source == "qoder-cli"
-    }
-
-    /// "Always allow" response for a ZCode PermissionRequest hook (#258).
-    ///
-    /// ZCode validates hook stdout with a STRICT schema (unknown keys void the
-    /// whole decision, and ZCode falls back to its own dialog). Persistent
-    /// rules therefore go in `permissionUpdates` — NOT Claude's
-    /// `updatedPermissions` — and there is no `destination` key. A rule with a
-    /// bare `toolName` (no `ruleContent`) matches every future call of that
-    /// tool, which is exactly the "always allow this tool" semantic; a
-    /// `ruleContent` of "*" would instead be compared against the call's
-    /// command/path subject and never match. Events without a tool name can't
-    /// form a valid rule (toolName must be non-empty), so they degrade to a
-    /// plain one-time allow.
-    nonisolated static func zcodeAlwaysAllowResponse(toolName: String?) -> Data {
-        let plainAllow = Data(#"{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decision":{"behavior":"allow"}}}"#.utf8)
-        guard let toolName, !toolName.isEmpty else { return plainAllow }
-        let obj: [String: Any] = [
-            "hookSpecificOutput": [
-                "hookEventName": "PermissionRequest",
-                "decision": [
-                    "behavior": "allow",
-                    "permissionUpdates": [[
-                        "type": "addRules",
-                        "behavior": "allow",
-                        "rules": [["toolName": toolName]],
-                    ] as [String: Any]]
-                ] as [String: Any]
-            ] as [String: Any]
-        ]
-        return (try? JSONSerialization.data(withJSONObject: obj)) ?? plainAllow
-    }
-
-    /// `expectedSessionId` is the session the remote surface was showing when
-    /// the button was pressed. The hardware Buddy has no session identity to
-    /// send and passes nil, keeping its head-of-queue behaviour; the iPhone
-    /// does send one, so a tap resolves against the card the user actually saw
-    /// — the #308 failure mode, which the panel fixed in #310 but this path
-    /// never did. A round trip over Bluetooth makes the race wider here than
-    /// it ever was on the panel.
-    func handleBuddyControlCommand(_ command: BuddyControlCommand, expectedSessionId: String? = nil) {
-        switch command {
-        case .approveCurrentPermission:
-            if !permissionQueue.isEmpty {
-                approvePermission(expectedSessionId: expectedSessionId)
-            } else {
-                log.info("Ignored Buddy approve command because permission queue is empty")
-            }
-        case .denyCurrentPermission:
-            if !permissionQueue.isEmpty {
-                denyPermission(expectedSessionId: expectedSessionId)
-            } else {
-                log.info("Ignored Buddy deny command because permission queue is empty")
-            }
-        case .skipCurrentQuestion:
-            if !questionQueue.isEmpty {
-                skipQuestion(expectedSessionId: expectedSessionId)
-            } else {
-                log.info("Ignored Buddy skip command because question queue is empty")
-            }
-        }
-    }
-
-    /// See `handleBuddyControlCommand` for why `expectedSessionId` matters.
-    func answerCompanionQuestion(_ answer: String, expectedSessionId: String? = nil) {
-        guard !questionQueue.isEmpty else {
-            log.info("Ignored companion question answer because question queue is empty")
-            return
-        }
-        // Route by the card the phone was showing, which need not be the head:
-        // never answer a question the user never read. Gone entirely (answered
-        // in the terminal) → answerQuestion discards it and resyncs.
-        guard let index = questionIndex(expecting: expectedSessionId) else {
-            answerQuestion(answer, expectedSessionId: expectedSessionId)
-            return
-        }
-
-        // AskUserQuestion is answered one question at a time from the phone.
-        // This must run at the addressed index too: answerQuestion() ignores
-        // wizard requests, so handing a non-head one to it dropped the answer.
-        if questionQueue[index].isFromPermission,
-           var askState = questionQueue[index].askUserQuestionState {
-            guard let itemIndex = askState.items.firstIndex(where: { askState.answers[$0.answerKey] == nil }) else {
-                answerQuestionMulti(askState.items.map {
-                    (question: $0.payload.question, answer: askState.answers[$0.answerKey] ?? "")
-                }, expectedSessionId: expectedSessionId)
-                return
-            }
-
-            let item = askState.items[itemIndex]
-            askState.answers[item.answerKey] = answer
-            questionQueue[index].askUserQuestionState = askState
-
-            if askState.canConfirm {
-                answerQuestionMulti(askState.items.map {
-                    (question: $0.payload.question, answer: askState.answers[$0.answerKey] ?? "")
-                }, expectedSessionId: expectedSessionId)
-            } else {
-                refreshDerivedState()
-            }
-            return
-        }
-
-        answerQuestion(answer, expectedSessionId: expectedSessionId)
-    }
-
     /// Find an existing session whose source matches and whose CLI PID equals
     /// the supplied ppid. Used by HookServer to merge plugin-proxied events
     /// (e.g. omo) into their main session when pluginSessionMode == "merge". (#123)
@@ -2389,699 +1823,6 @@ final class AppState {
                 && snapshot.providerSessionId == providerSessionId
                 && snapshot.isNativeAppMode == childIsDesktop
         })?.key
-    }
-
-    func denyPermission(expectedSessionId: String? = nil) {
-        guard let index = permissionIndex(expecting: expectedSessionId) else {
-            if let expectedSessionId {
-                discardStalePanelAction(expected: expectedSessionId, kind: "deny")
-            }
-            return
-        }
-        let pending = permissionQueue.remove(at: index)
-        let sessionId = pending.event.sessionId ?? "default"
-        dismissedPermissionSessionIds.remove(sessionId)
-        let response = #"{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decision":{"behavior":"deny"}}}"#
-        pending.continuation.resume(returning: Data(response.utf8))
-        // Folded Task deny must not idle the whole parent chat card.
-        resolveMergedSubagentAfterUI(
-            sessionId: sessionId,
-            agentId: pending.event.agentId,
-            subagentStatus: .processing,
-            keepSubagentTool: nil,
-            idleParentWhenNoAgent: true
-        )
-
-        if activeSessionId == sessionId {
-            activeSessionId = mostActiveSessionId()
-        }
-
-        showNextPending()
-        refreshDerivedState()
-    }
-
-    func dismissPermissionPrompt(expectedSessionId: String? = nil) {
-        guard let index = permissionIndex(expecting: expectedSessionId) else {
-            if let expectedSessionId {
-                discardStalePanelAction(expected: expectedSessionId, kind: "dismiss")
-            }
-            return
-        }
-        let pending = permissionQueue[index]
-
-        let sessionId = pending.event.sessionId ?? "default"
-        dismissedPermissionSessionIds.insert(sessionId)
-
-        if nextVisiblePermissionIndex() != nil {
-            showNextPending()
-        } else {
-            if case .approvalCard = surface {
-                withAnimation(NotchAnimation.close) {
-                    surface = .collapsed
-                }
-            }
-        }
-        refreshDerivedState()
-    }
-
-    func handleQuestion(_ event: HookEvent, continuation: CheckedContinuation<Data, Never>) {
-        let sessionId = event.sessionId ?? "default"
-        if sessions[sessionId] == nil {
-            sessions[sessionId] = SessionSnapshot()
-        }
-        if event.agentId == nil {
-            extractMetadata(into: &sessions, sessionId: sessionId, event: event)
-        } else {
-            fillMissingParentMetadataFromSubagentEvent(into: &sessions, sessionId: sessionId, event: event)
-        }
-        tryMonitorSession(sessionId)
-
-        if shouldSuppressClosedSubagentUI(sessionId: sessionId, agentId: event.agentId) {
-            continuation.resume(returning: Data("{}".utf8))
-            return
-        }
-
-        guard let question = QuestionPayload.from(event: event) else {
-            continuation.resume(returning: Data("{}".utf8))
-            return
-        }
-        drainPermissions(forSession: sessionId, reason: "handleQuestion(Notification)", where: { $0.agentId == event.agentId })
-
-        sessions[sessionId]?.status = .waitingQuestion
-        sessions[sessionId]?.lastActivity = Date()
-        markMergedSubagentWaiting(sessionId: sessionId, agentId: event.agentId, status: .waitingQuestion)
-
-        let request = QuestionRequest(event: event, question: question, continuation: continuation)
-        questionQueue.append(request)
-        pushQuestionQueued(request, sessionId: sessionId, smartSuppressed: !shouldAutoOpenPendingSurface(for: sessionId))
-
-        // First of a burst: nothing else visibly waiting. Not `count == 1` —
-        // a closed question stays queued, and must not swallow every later
-        // question's card and sound (the trap #309 fixed for approvals).
-        if nextVisibleQuestion?.id == request.id {
-            activeSessionId = sessionId
-            if Self.autoExpandOnQuestion(), shouldAutoOpenPendingSurface(for: sessionId) {
-                withAnimation(NotchAnimation.open) {
-                    surface = .questionCard(sessionId: sessionId)
-                }
-            }
-            SoundManager.shared.handleEvent("PermissionRequest")
-        }
-        refreshDerivedState()
-    }
-
-    func handleAskUserQuestion(_ event: HookEvent, continuation: CheckedContinuation<Data, Never>) {
-        let sessionId = event.sessionId ?? "default"
-        if sessions[sessionId] == nil {
-            sessions[sessionId] = SessionSnapshot()
-        }
-        if event.agentId == nil {
-            extractMetadata(into: &sessions, sessionId: sessionId, event: event)
-        } else {
-            fillMissingParentMetadataFromSubagentEvent(into: &sessions, sessionId: sessionId, event: event)
-        }
-        tryMonitorSession(sessionId)
-
-        if shouldSuppressClosedSubagentUI(sessionId: sessionId, agentId: event.agentId) {
-            let denyResponse = Data(
-                #"{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decision":{"behavior":"deny"}}}"#.utf8
-            )
-            continuation.resume(returning: denyResponse)
-            return
-        }
-
-        let originalQuestions = event.toolInput?["questions"] as? [[String: Any]]
-        var askItems: [AskUserQuestionItem] = []
-        if let questions = originalQuestions {
-            var usedAnswerKeys = Set<String>()
-            askItems = questions.enumerated().compactMap { index, item in
-                let questionText = item["question"] as? String ?? "Question"
-                let header = item["header"] as? String
-                let multiSelect = item["multiSelect"] as? Bool ?? false
-                var optionLabels: [String]?
-                var optionDescs: [String]?
-                if let opts = item["options"] as? [[String: Any]] {
-                    optionLabels = opts.compactMap { $0["label"] as? String }
-                    optionDescs = opts.compactMap { $0["description"] as? String }
-                }
-                if optionLabels?.isEmpty == true { optionLabels = nil }
-                if optionDescs?.isEmpty == true { optionDescs = nil }
-                let payload = QuestionPayload(
-                    question: questionText,
-                    options: optionLabels,
-                    descriptions: optionDescs,
-                    header: header
-                )
-                // Claude Code's mapToolResultToToolResultBlockParam looks up answers by
-                // question text: `answers[question.question]`. Using header as the key
-                // causes a mismatch and all answers arrive as empty strings.
-                let baseKey = questionText
-                var answerKey = baseKey
-                if usedAnswerKeys.contains(answerKey) {
-                    var suffix = 2
-                    while usedAnswerKeys.contains("\(baseKey)_\(suffix)") {
-                        suffix += 1
-                    }
-                    answerKey = "\(baseKey)_\(suffix)"
-                }
-                usedAnswerKeys.insert(answerKey)
-                return AskUserQuestionItem(payload: payload, answerKey: answerKey, multiSelect: multiSelect)
-            }
-        }
-
-        if askItems.isEmpty {
-            let questionText = event.toolInput?["question"] as? String ?? "Question"
-            var options: [String]?
-            if let stringOpts = event.toolInput?["options"] as? [String] {
-                options = stringOpts
-            } else if let dictOpts = event.toolInput?["options"] as? [[String: Any]] {
-                options = dictOpts.compactMap { $0["label"] as? String }
-            }
-            if !questionText.isEmpty {
-                let payload = QuestionPayload(question: questionText, options: options)
-                askItems = [AskUserQuestionItem(payload: payload, answerKey: "answer", multiSelect: false)]
-            }
-        }
-
-        guard !askItems.isEmpty else {
-            let updatedInput = askUserQuestionUpdatedInput(
-                event: event,
-                answers: [:],
-                answer: nil,
-                originalQuestions: originalQuestions
-            )
-            let obj: [String: Any] = [
-                "hookSpecificOutput": [
-                    "hookEventName": "PermissionRequest",
-                    "decision": [
-                        "behavior": "allow",
-                        "updatedInput": updatedInput
-                    ] as [String: Any]
-                ] as [String: Any]
-            ]
-            let responseData = (try? JSONSerialization.data(withJSONObject: obj)) ?? Data("{}".utf8)
-            continuation.resume(returning: responseData)
-            sessions[sessionId]?.status = .processing
-            refreshDerivedState()
-            return
-        }
-
-        drainPermissions(forSession: sessionId, reason: "handleAskUserQuestion", where: { $0.agentId == event.agentId })
-        drainQuestions(forSession: sessionId, reason: "handleAskUserQuestion", where: { $0.agentId == event.agentId })
-
-        sessions[sessionId]?.status = .waitingQuestion
-        sessions[sessionId]?.lastActivity = Date()
-        markMergedSubagentWaiting(sessionId: sessionId, agentId: event.agentId, status: .waitingQuestion)
-
-        let askState = AskUserQuestionState(items: askItems, answers: [:])
-        let request = QuestionRequest(
-            event: event,
-            question: askItems[0].payload,
-            continuation: continuation,
-            isFromPermission: true,
-            askUserQuestionState: askState
-        )
-        questionQueue.append(request)
-        // Smart Suppress alone: whether the island opens the card by itself
-        // (the "auto-expand on question" switch) says nothing about whether
-        // the person is looking at the question in their terminal.
-        pushQuestionQueued(
-            request,
-            sessionId: sessionId,
-            smartSuppressed: !shouldAutoOpenPendingSurface(
-                for: sessionId,
-                isTerminalFrontmost: questionTerminalFrontmostDetector
-            )
-        )
-
-        // First of a burst, as in `handleQuestion`.
-        if nextVisibleQuestion?.id == request.id {
-            activeSessionId = sessionId
-            if Self.autoExpandOnQuestion(), shouldAutoOpenQuestionSurface(for: event) {
-                withAnimation(NotchAnimation.open) {
-                    surface = .questionCard(sessionId: sessionId)
-                }
-            }
-            SoundManager.shared.handleEvent("PermissionRequest")
-        }
-        refreshDerivedState()
-    }
-
-    func answerQuestion(_ answer: String, expectedSessionId: String? = nil) {
-        guard let index = questionIndex(expecting: expectedSessionId) else {
-            if let expectedSessionId {
-                discardStalePanelAction(expected: expectedSessionId, kind: "answer")
-            }
-            return
-        }
-        // Multi-question wizards (AskUserQuestion, Codex app-server) use the batch
-        // path — direct single answers are not processed.
-        if questionQueue[index].askUserQuestionState != nil,
-           (questionQueue[index].isFromPermission || questionQueue[index].isCodexAppServer) {
-            return
-        }
-        // Codex app-server questions reply over the JSON-RPC client, not a hook.
-        if questionQueue[index].isCodexAppServer {
-            let pending = questionQueue.remove(at: index)
-            let answerKey = pending.askUserQuestionState?.items.first?.answerKey
-                ?? pending.question.header ?? "answer"
-            pending.resolveCodexAppServer([answerKey: [answer]])
-            let sessionId = pending.event.sessionId ?? "default"
-            sessions[sessionId]?.status = .processing
-            showNextPending()
-            refreshDerivedState()
-            return
-        }
-        let pending = questionQueue.remove(at: index)
-        let responseData: Data
-        if pending.isFromPermission {
-            let answerKey = pending.question.header ?? "answer"
-            let updatedInput = askUserQuestionUpdatedInput(
-                event: pending.event,
-                answers: [answerKey: answer],
-                answer: answer,
-                originalQuestions: pending.event.toolInput?["questions"] as? [[String: Any]]
-            )
-            let obj: [String: Any] = [
-                "hookSpecificOutput": [
-                    "hookEventName": "PermissionRequest",
-                    "decision": [
-                        "behavior": "allow",
-                        "updatedInput": updatedInput
-                    ] as [String: Any]
-                ] as [String: Any]
-            ]
-            responseData = (try? JSONSerialization.data(withJSONObject: obj)) ?? Data("{}".utf8)
-        } else {
-            let obj: [String: Any] = [
-                "hookSpecificOutput": [
-                    "hookEventName": "Notification",
-                    "answer": answer
-                ] as [String: Any]
-            ]
-            responseData = (try? JSONSerialization.data(withJSONObject: obj)) ?? Data("{}".utf8)
-        }
-        pending.resolution.resumeHook(returning: responseData)
-        let sessionId = pending.event.sessionId ?? "default"
-        resolveMergedSubagentAfterUI(
-            sessionId: sessionId,
-            agentId: pending.event.agentId,
-            subagentStatus: .running,
-            keepSubagentTool: nil,
-            idleParentWhenNoAgent: false
-        )
-
-        showNextPending()
-        refreshDerivedState()
-    }
-
-    func answerQuestionMulti(
-        _ answers: [(question: String, answer: String)],
-        expectedSessionId: String? = nil
-    ) {
-        answerQuestionMulti(
-            answers.map {
-                AskUserQuestionAnswer(
-                    question: $0.question,
-                    answer: $0.answer,
-                    selectedOptions: [],
-                    customInput: nil
-                )
-            },
-            expectedSessionId: expectedSessionId
-        )
-    }
-
-    func answerQuestionMulti(
-        _ answers: [AskUserQuestionAnswer],
-        expectedSessionId: String? = nil
-    ) {
-        guard let index = questionIndex(expecting: expectedSessionId) else {
-            if let expectedSessionId {
-                discardStalePanelAction(expected: expectedSessionId, kind: "answer")
-            }
-            return
-        }
-        // Wizard answers are mapped onto items by position below. A set that
-        // is not exactly one answer per this request's questions was collected
-        // for some other request — delivering it would answer this CLI's
-        // question with another session's answer — so it is refused and the
-        // request stays waiting. (#333)
-        if let askState = questionQueue[index].askUserQuestionState,
-           !askState.accepts(answers) {
-            let sessionId = questionQueue[index].event.sessionId ?? "default"
-            log.notice("⚠️ refused answers for session=\(sessionId, privacy: .public) — \(answers.count, privacy: .public) answer(s) do not match its \(askState.items.count, privacy: .public) question(s)")
-            refreshDerivedState()
-            return
-        }
-        // Codex app-server questions reply over the JSON-RPC client, not a hook.
-        if questionQueue[index].isCodexAppServer {
-            let pending = questionQueue.remove(at: index)
-            var answersByKey: [String: [String]] = [:]
-            if let askState = pending.askUserQuestionState {
-                // Match by position — the wizard collects answers in item order.
-                for (index, item) in askState.items.enumerated() where index < answers.count {
-                    answersByKey[item.answerKey] = [answers[index].answer]
-                }
-            } else {
-                let answerKey = pending.question.header ?? "answer"
-                answersByKey[answerKey] = [answers.first?.answer ?? ""]
-            }
-            pending.resolveCodexAppServer(answersByKey)
-            let sessionId = pending.event.sessionId ?? "default"
-            sessions[sessionId]?.status = .processing
-            showNextPending()
-            refreshDerivedState()
-            return
-        }
-        let pending = questionQueue.remove(at: index)
-        let responseData: Data
-        if pending.isFromPermission {
-            var answersDict: [String: String] = [:]
-            var answerDetails: [String: [String: Any]] = [:]
-            if let askState = pending.askUserQuestionState {
-                // Match by position — wizard collects answers in the same order as items
-                for (index, item) in askState.items.enumerated() {
-                    if index < answers.count {
-                        let submitted = answers[index]
-                        answersDict[item.answerKey] = submitted.answer
-                        var details: [String: Any] = [:]
-                        if !submitted.selectedOptions.isEmpty {
-                            details["selectedOptions"] = submitted.selectedOptions
-                        }
-                        if let customInput = submitted.customInput {
-                            details["customInput"] = customInput
-                        }
-                        if !details.isEmpty {
-                            answerDetails[item.answerKey] = details
-                        }
-                    }
-                }
-            } else {
-                let answerKey = pending.question.header ?? "answer"
-                answersDict[answerKey] = answers.first?.answer ?? ""
-            }
-            let updatedInput = askUserQuestionUpdatedInput(
-                event: pending.event,
-                answers: answersDict,
-                answer: answers.first?.answer,
-                originalQuestions: pending.event.toolInput?["questions"] as? [[String: Any]],
-                answerDetails: answerDetails
-            )
-            let obj: [String: Any] = [
-                "hookSpecificOutput": [
-                    "hookEventName": "PermissionRequest",
-                    "decision": [
-                        "behavior": "allow",
-                        "updatedInput": updatedInput
-                    ] as [String: Any]
-                ] as [String: Any]
-            ]
-            responseData = (try? JSONSerialization.data(withJSONObject: obj)) ?? Data("{}".utf8)
-        } else {
-            let obj: [String: Any] = [
-                "hookSpecificOutput": [
-                    "hookEventName": "Notification",
-                    "answer": answers.first?.answer ?? ""
-                ] as [String: Any]
-            ]
-            responseData = (try? JSONSerialization.data(withJSONObject: obj)) ?? Data("{}".utf8)
-        }
-        pending.resolution.resumeHook(returning: responseData)
-        let sessionId = pending.event.sessionId ?? "default"
-        resolveMergedSubagentAfterUI(
-            sessionId: sessionId,
-            agentId: pending.event.agentId,
-            subagentStatus: .running,
-            keepSubagentTool: nil,
-            idleParentWhenNoAgent: false
-        )
-
-        showNextPending()
-        refreshDerivedState()
-    }
-
-    private func askUserQuestionUpdatedInput(
-        event: HookEvent,
-        answers: [String: String],
-        answer: String?,
-        originalQuestions: [[String: Any]]?,
-        answerDetails: [String: [String: Any]] = [:]
-    ) -> [String: Any] {
-        var updatedInput = event.toolInput ?? [:]
-        // `questions` must always be present in updatedInput. Claude Code's
-        // mapToolResultToToolResultBlockParam calls H.map() on it directly;
-        // if the key is absent H is undefined and the call crashes with
-        // "undefined is not an object (evaluating 'H.map')".
-        // Fall back to the raw toolInput value when the [[String:Any]] cast fails.
-        updatedInput["questions"] = originalQuestions ?? (event.toolInput?["questions"] ?? [] as [[String: Any]])
-        updatedInput["answers"] = answers
-        // Qoder CLI validates updatedInput against the AskUserQuestion schema
-        // (additionalProperties: false, only questions/answers/annotations/
-        // metadata). The scalar `answer` key fails that validation with
-        // "params must NOT have additional properties", so omit it there.
-        if let answer, !Self.isQoderEvent(event) {
-            updatedInput["answer"] = answer
-        }
-        // Structured picks for plugins that answer with label arrays: OMP/Pi,
-        // and OpenCode, whose multi-select answers are `string[]` (v1) or a
-        // multiselect form field (v2) — a ", "-joined display string can't be
-        // split back when a label itself contains ", " (#332). MiMo Code runs
-        // the same plugin against OpenCode 1.x's question API.
-        let detailsSource = SessionSnapshot.normalizedSupportedSource(event.rawJSON["_source"] as? String)
-        if !answerDetails.isEmpty,
-           (detailsSource == "pi" && event.toolUseId != nil)
-            || detailsSource == "opencode" || detailsSource == "mimo" {
-            updatedInput["_codeislandAnswerDetails"] = answerDetails
-        }
-        return updatedInput
-    }
-
-    /// Close a question card without answering it. The request stays queued
-    /// and the agent keeps waiting: answer it in the terminal, or reopen the
-    /// card from the collapsed bar's question badge. Skip, by contrast,
-    /// answers — for AskUserQuestion it denies the tool call.
-    func dismissQuestion(expectedSessionId: String? = nil) {
-        guard let index = questionIndex(expecting: expectedSessionId) else {
-            if let expectedSessionId {
-                discardStalePanelAction(expected: expectedSessionId, kind: "dismiss")
-            }
-            return
-        }
-        dismissedQuestionIds.insert(questionQueue[index].id)
-
-        if case .questionCard = surface {
-            withAnimation(NotchAnimation.close) {
-                surface = .collapsed
-            }
-        }
-        // Hand the panel to whatever is still visibly waiting, if it may open.
-        showNextPending()
-        refreshDerivedState()
-    }
-
-    func skipQuestion(expectedSessionId: String? = nil) {
-        guard let index = questionIndex(expecting: expectedSessionId) else {
-            if let expectedSessionId {
-                discardStalePanelAction(expected: expectedSessionId, kind: "skip")
-            }
-            return
-        }
-        let pending = questionQueue.remove(at: index)
-        if pending.isCodexAppServer {
-            // No "skip" verb in the Codex protocol — abandon the request so the
-            // server stops waiting (it will re-prompt or fall back to its TUI).
-            pending.resolveCodexAppServer(nil)
-        } else {
-            let responseData: Data
-            if pending.isFromPermission {
-                responseData = Data(#"{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decision":{"behavior":"deny"}}}"#.utf8)
-            } else {
-                responseData = Data(#"{"hookSpecificOutput":{"hookEventName":"Notification"}}"#.utf8)
-            }
-            pending.resolution.resumeHook(returning: responseData)
-        }
-        let sessionId = pending.event.sessionId ?? "default"
-        resolveMergedSubagentAfterUI(
-            sessionId: sessionId,
-            agentId: pending.event.agentId,
-            subagentStatus: .processing,
-            keepSubagentTool: nil,
-            idleParentWhenNoAgent: false
-        )
-
-        showNextPending()
-        refreshDerivedState()
-    }
-
-    /// Drain queued permissions for a specific session, resuming their continuations with deny.
-    /// `matches` narrows the drain by the request's event — background subagents share the
-    /// parent's session_id, so callers reacting to one agent pass an agent_id filter.
-    private func drainPermissions(
-        forSession sessionId: String,
-        reason: String = "unknown",
-        where matches: (HookEvent) -> Bool = { _ in true }
-    ) {
-        dismissedPermissionSessionIds.remove(sessionId)
-        let denyResponse = Data(#"{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decision":{"behavior":"deny"}}}"#.utf8)
-        permissionQueue.removeAll { item in
-            guard item.event.sessionId == sessionId, matches(item.event) else { return false }
-            log.notice("⚠️ permission deny reason=drainPermissions(\(reason, privacy: .public)) session=\(sessionId, privacy: .public) toolUseId=\(item.toolUseId ?? "nil", privacy: .public) tool=\(item.event.toolName ?? "nil", privacy: .public)")
-            item.continuation.resume(returning: denyResponse)
-            return true
-        }
-    }
-
-    /// Called when the bridge socket disconnects — the question/permission was answered externally (e.g. user replied in terminal).
-    /// Only the disconnecting agent's requests are drained: the socket belonged to one agent,
-    /// and another agent's request in the same session is still waiting on the user.
-    func handlePeerDisconnect(sessionId: String, agentId: String? = nil) {
-        let sameAgent: (HookEvent) -> Bool = { $0.sessionId == sessionId && $0.agentId == agentId }
-        let hadPending = questionQueue.contains(where: { sameAgent($0.event) })
-            || permissionQueue.contains(where: { sameAgent($0.event) })
-        guard hadPending else { return }
-
-        drainQuestions(forSession: sessionId, reason: "peer-disconnect", where: sameAgent)
-        drainPermissions(forSession: sessionId, reason: "peer-disconnect", where: sameAgent)
-        let currentStatus = sessions[sessionId]?.status
-        let wasWaiting = currentStatus == .waitingApproval || currentStatus == .waitingQuestion
-        if wasWaiting, permissionQueue.contains(where: { $0.event.sessionId == sessionId }) {
-            sessions[sessionId]?.status = .waitingApproval
-        } else if wasWaiting, questionQueue.contains(where: { $0.event.sessionId == sessionId }) {
-            sessions[sessionId]?.status = .waitingQuestion
-        } else if wasWaiting {
-            sessions[sessionId]?.status = .processing
-            sessions[sessionId]?.currentTool = nil
-            sessions[sessionId]?.toolDescription = nil
-        }
-        showNextPending()
-        refreshDerivedState()
-    }
-
-    /// Drain all queued questions for a specific session.
-    /// AskUserQuestion-derived requests are denied; notification questions return empty.
-    private func drainQuestions(
-        forSession sessionId: String,
-        reason: String = "unknown",
-        where matches: (HookEvent) -> Bool = { _ in true }
-    ) {
-        questionQueue.removeAll { item in
-            guard item.event.sessionId == sessionId, matches(item.event) else { return false }
-            if item.isCodexAppServer {
-                // Abandon the Codex app-server request so the server stops waiting.
-                item.resolveCodexAppServer(nil)
-            } else if item.isFromPermission {
-                log.notice("⚠️ permission deny reason=drainQuestions(\(reason, privacy: .public)) session=\(sessionId, privacy: .public) tool=AskUserQuestion")
-                let denyData = Data(
-                    #"{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decision":{"behavior":"deny"}}}"#.utf8)
-                item.resolution.resumeHook(returning: denyData)
-            } else {
-                item.resolution.resumeHook(returning: Data("{}".utf8))
-            }
-            return true
-        }
-    }
-
-    /// A card the user can no longer act on must never stay on screen: the panel
-    /// would sit expanded showing a request that is gone or dismissed, and any
-    /// click landing on it can only be discarded. Auto-open suppression decides
-    /// whether to open a *new* card, not whether to keep a dead one, so this
-    /// runs unconditionally. (#308)
-    ///
-    /// "Dead" is the same predicate `nextVisiblePermissionIndex()` applies:
-    /// dismissed counts as not visible. Testing queue membership alone would
-    /// keep a dismissed card up, because dismissing hides without dequeuing.
-    private func collapseStaleCardSurface() {
-        switch surface {
-        case .approvalCard(let sid)
-            where pendingPermission(forSession: sid) == nil
-                || dismissedPermissionSessionIds.contains(sid):
-            surface = .collapsed
-        case .questionCard(let sid) where pendingQuestion(forSession: sid) == nil:
-            surface = .collapsed
-        default:
-            break
-        }
-    }
-
-    /// After dequeuing, show the next pending item, else the next finished
-    /// turn, else collapse.
-    ///
-    /// Returns whether something the user can act on is on screen afterwards:
-    /// an approval / question card, or the session list (which answers them
-    /// inline), or the next completion card. A request that stays hidden —
-    /// its auto-expand switch is off, Smart Suppress holds it back — is not
-    /// on screen: a completion card whose time is up then moves on to the
-    /// next finished turn or folds, instead of staying up for nobody.
-    @discardableResult
-    func showNextPending() -> Bool {
-        collapseStaleCardSurface()
-        let hasPending: Bool
-        if let idx = nextVisiblePermissionIndex() {
-            hasPending = true
-            // An approval card still showing the request it was opened for
-            // stays — the user may have picked it (session list, reminder)
-            // over the head. It becomes the head, so whatever mirrors the
-            // head (Buddy) agrees with the screen.
-            let shownIdx = shownApprovalIndex
-            // One assignment: removing and re-inserting in place would show
-            // the queue's observers (follow-up reminders) a moment where this
-            // request is gone, and its reminder would start over.
-            var queue = permissionQueue
-            let next = queue.remove(at: shownIdx ?? idx)
-            queue.insert(next, at: 0)
-            permissionQueue = queue
-            let sid = next.event.sessionId ?? "default"
-            activeSessionId = sid
-            if shownIdx != nil { return true }
-            // When the session list is open, keep it open; approvals can be handled inline.
-            if surface == .sessionList { return true }
-            if Self.autoExpandOnPermission(), shouldAutoOpenPendingSurface(for: sid) {
-                surface = .approvalCard(sessionId: sid)
-                return true
-            }
-            // The approval stays hidden; a card already up stays with it.
-            if surface.approvalSessionId != nil || surface.questionSessionId != nil { return true }
-        } else if let next = nextVisibleQuestion {
-            hasPending = true
-            // A question card still showing the question it was opened for
-            // stays, even when it is not the head (the user clicked "Answer"
-            // on it, a reminder reopened it).
-            if let shown = shownQuestionSessionId {
-                activeSessionId = shown
-                return true
-            }
-            let sid = next.event.sessionId ?? "default"
-            activeSessionId = sid
-            if !Self.autoExpandOnQuestion() {
-                // Nothing opens by itself — and a card the user opened with a
-                // click stays put. Stale cards were already folded above.
-                if surface.questionSessionId != nil || surface == .sessionList { return true }
-            } else if shouldAutoOpenQuestionSurface(for: next.event) {
-                surface = .questionCard(sessionId: sid)
-                return true
-            } else if case .questionCard = surface {
-                // Smart Suppress wants this card collapsed (e.g. an OMP ask
-                // whose terminal dialog is racing). Fold an inherited
-                // question-card surface so the promoted card does not render
-                // expanded on top of the previous question's surface.
-                surface = .collapsed
-            } else if surface == .sessionList {
-                return true
-            }
-        } else {
-            hasPending = false
-        }
-        // Nothing interactive on screen. A completion card that is up keeps
-        // its own time (`showNextCompletionOrCollapse` moves on when it is
-        // over); a request arriving hidden must not cut it short.
-        if !hasPending || !isShowingCompletion, showNextQueuedCompletion() {
-            return true
-        }
-        if surface.approvalSessionId != nil || surface.questionSessionId != nil {
-            surface = .collapsed
-        }
-        return false
     }
 
     /// Show the oldest queued completion whose session still exists.

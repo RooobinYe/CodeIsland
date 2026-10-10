@@ -64,8 +64,7 @@ struct MorphText: View {
     @State private var generation = 0
     /// Monotonic (`systemUptime`), not wall-clock: an NTP correction or a
     /// sleep/wake that steps the clock backward would make the elapsed test
-    /// negative and pin the label into no-morph mode. Same posture as
-    /// MascotAnimationGate's wake-drift handling (#225).
+    /// negative and pin the label into no-morph mode.
     @State private var lastChangeAt: TimeInterval = -.greatestFiniteMagnitude
 
     /// Updates arriving within this window are treated as a stream, not a morph.

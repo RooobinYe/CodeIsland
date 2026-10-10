@@ -1,27 +1,23 @@
 import Foundation
 
-/// A wait the island mirrors but cannot answer.
+/// A wait the island mirrors but never answers.
 ///
-/// Some agents block on the user somewhere the island has no channel into:
-/// Claude Desktop's Cowork permission cards, Cursor's in-IDE AskQuestion,
-/// AiWork's approval / plan confirmation / question prompts, a terminal's own
-/// permission prompt announced by a `Notification(permission_prompt)` hook, a
-/// Codex Desktop thread flagged `waitingOnApproval` / `waitingOnUserInput`.
-/// Each of them only sets the session's status. Nothing is queued, so there
-/// is no card to answer: the session card says where to go, and a click takes
-/// the user there.
+/// Every agent blocked on the user — a PermissionRequest or AskUserQuestion
+/// hook, a terminal permission prompt announced by a
+/// `Notification(permission_prompt)` hook, Claude Desktop's Cowork cards,
+/// Cursor's in-IDE AskQuestion, AiWork's prompts, a Codex Desktop thread
+/// flagged `waitingOnApproval` / `waitingOnUserInput` — only sets the
+/// session's status. Nothing is queued: the session card says where to go,
+/// and a click takes the user there.
 ///
-/// Whether a session waits display-only is read off the session, never
-/// remembered: it does for exactly as long as its status says it is blocked
-/// on the user and the island holds no request for it. A request the island
-/// holds — queued, or queued and dismissed — is the island's own business.
+/// Whether a session waits is read off the session, never remembered: it
+/// does for exactly as long as its status says it is blocked on the user.
 public enum DisplayOnlyWait {
     /// Claude Desktop hosts Cowork tasks and its own Code-tab sessions.
     static let claudeDesktopBundleId = "com.anthropic.claudefordesktop"
 
-    /// The follow-up kind a session is display-only waiting on, or nil.
-    public static func kind(status: AgentStatus, islandHoldsRequest: Bool) -> FollowUpReminderKind? {
-        guard !islandHoldsRequest else { return nil }
+    /// The follow-up kind a session is waiting on, or nil.
+    public static func kind(status: AgentStatus) -> FollowUpReminderKind? {
         switch status {
         case .waitingApproval: return .approval
         case .waitingQuestion: return .question
@@ -32,12 +28,11 @@ public enum DisplayOnlyWait {
     /// Every session display-only waiting on `kind`.
     public static func sessionIds(
         waitingOn kind: FollowUpReminderKind,
-        in sessions: [String: SessionSnapshot],
-        islandRequestSessionIds: Set<String>
+        in sessions: [String: SessionSnapshot]
     ) -> Set<String> {
         var waiting: Set<String> = []
         for (sessionId, session) in sessions
-        where Self.kind(status: session.status, islandHoldsRequest: islandRequestSessionIds.contains(sessionId)) == kind {
+        where Self.kind(status: session.status) == kind {
             waiting.insert(sessionId)
         }
         return waiting

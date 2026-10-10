@@ -20,6 +20,8 @@ final class ClaudeQuotaMonitor {
     @ObservationIgnored private let defaults: UserDefaults
     @ObservationIgnored private var observers: [NSObjectProtocol] = []
     @ObservationIgnored private var workspaceObservers: [NSObjectProtocol] = []
+    /// False between a system/display sleep and the next wake.
+    @ObservationIgnored private var isAwake = true
 
     /// `defaults` is injectable so tests never flip the real setting — a
     /// stray enabled monitor would hit the keychain and block on its prompt.
@@ -39,9 +41,17 @@ final class ClaudeQuotaMonitor {
             Task { @MainActor in self?.settingsChanged() }
         })
         let ws = NSWorkspace.shared.notificationCenter
+        for name in [NSWorkspace.willSleepNotification, NSWorkspace.screensDidSleepNotification] {
+            workspaceObservers.append(ws.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                Task { @MainActor in self?.isAwake = false }
+            })
+        }
         for name in [NSWorkspace.didWakeNotification, NSWorkspace.screensDidWakeNotification] {
             workspaceObservers.append(ws.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
-                Task { @MainActor in self?.reschedule() }
+                Task { @MainActor in
+                    self?.isAwake = true
+                    self?.reschedule()
+                }
             })
         }
         // Launch: with the collapsed chip on, the numbers are on screen from
@@ -129,7 +139,7 @@ final class ClaudeQuotaMonitor {
 
     private func fireScheduled() {
         // Asleep: skip; the wake observer reschedules.
-        guard MascotAnimationGate.shared.isAwake else { return }
+        guard isAwake else { return }
         guard wantsLive else { return }
         fetchNow()
     }

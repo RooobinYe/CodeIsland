@@ -5,14 +5,13 @@
 
 <p align="center">
   <b>把你的 AI 编码 Agent 装进 MacBook 刘海。</b><br>
-  每个 Agent 在干什么一眼看清，审批工具调用、回答它的提问，都不用离开当前窗口。
+  哪个 Agent 在运行、哪个在等你、哪个刚跑完，一眼看清，不用离开当前窗口。
 </p>
 
 <p align="center">
   <a href="https://github.com/wxtsky/CodeIsland/releases/latest"><img src="https://img.shields.io/github/v/release/wxtsky/CodeIsland?style=flat-square&color=4c8bf5&label=release" alt="最新版本"></a>
   <a href="https://github.com/wxtsky/CodeIsland/releases"><img src="https://img.shields.io/github/downloads/wxtsky/CodeIsland/total?style=flat-square&color=2ea44f" alt="下载量"></a>
   <img src="https://img.shields.io/badge/macOS-14%2B-111111?style=flat-square&logo=apple&logoColor=white" alt="macOS 14+">
-  <a href="https://apps.apple.com/us/app/code-island-buddy/id6773881129"><img src="https://img.shields.io/badge/iPhone%20%26%20Watch-Buddy-0d96f6?style=flat-square&logo=appstore&logoColor=white" alt="App Store 上的 Code Island Buddy"></a>
   <a href="LICENSE"><img src="https://img.shields.io/github/license/wxtsky/CodeIsland?style=flat-square&color=8250df" alt="MIT 许可证"></a>
   <a href="https://github.com/wxtsky/CodeIsland/stargazers"><img src="https://img.shields.io/github/stars/wxtsky/CodeIsland?style=flat-square&color=e3b341" alt="GitHub stars"></a>
 </p>
@@ -33,7 +32,9 @@
 
 ## 为什么需要 CodeIsland？
 
-编码 Agent 大部分时间不是在干活，就是在等你——而你只有切到它的窗口才知道是哪种。CodeIsland 把刘海变成所有 Agent 的实时状态栏：哪个会话在思考、哪个在等审批、哪个刚跑完，一目了然。审批和提问直接在刘海上处理，或者点一下跳到对应的终端标签页。
+编码 Agent 大部分时间不是在干活，就是在等你——而你只有切到它的窗口才知道是哪种。CodeIsland 把刘海变成所有 Agent 的实时状态栏：哪个会话在运行、哪个阻塞在审批或提问上、哪个刚跑完，一目了然。刘海只负责展示：审批和提问都在 Agent 自己那里处理，点一下即可跳到对应的终端标签页。
+
+> 这是一个仅供个人使用、只做展示的 fork：刘海上没有审批和答题，没有 Buddy 配套设备，没有吉祥物动画，也没有自动更新。
 
 支持 **30+ 款 AI 编码工具**，hook 自动安装，所有数据留在你的 Mac 上。
 
@@ -49,17 +50,17 @@
 - Agent 自己的任务清单显示为进度条，显示 Claude Code 的「离开期间回顾」，可选显示模型与推理强度
 - 卡片上显示 Git 分支与 worktree；会话可按项目或工具分组
 - Claude 用量统计，以及可选开启的套餐额度（5 小时 / 每周）
-- 每个工具一个像素风吉祥物，随 Agent 状态做动作
+- 每个工具一个静态 logo，一眼分清是哪种 harness
 
 </td>
 <td width="50%" valign="top">
 
-**✋ 不切窗口就能处理**
+**🚦 运行中、阻塞中、已完成**
 
-- 批准、拒绝、始终允许工具调用；回答多问题向导
+- 每个会话都显示它在运行、阻塞在你身上（审批或提问），还是已经完成
+- 刘海从不扣住请求：Agent 照常在自己的界面里询问，就像没装 CodeIsland 一样
 - 一键跳到对应的终端标签页、IDE 窗口，或 tmux / zellij / Herdr 面板
-- 全局快捷键：批准、拒绝、跳过、跳转
-- 已开 YOLO / Turbo 模式的 Agent 可设为自动放行
+- 全局快捷键：开关面板、跳转到终端
 
 </td>
 </tr>
@@ -73,7 +74,7 @@
 - 全屏时自动隐藏、自动避让菜单栏图标、展开 / 收起速度可调
 - 静默规则：指定目录的会话永不打扰
 - 锁屏、屏保、显示器睡眠时自动静音；单个工具失败不再响错误音，只有整轮失败才响
-- 可选的跟进提醒：审批、提问和你还没看的完成结果，过几分钟再提醒一次
+- 可选的跟进提醒：阻塞中的会话和你还没看的完成结果，过几分钟再提醒一次
 
 </td>
 <td width="50%" valign="top">
@@ -81,62 +82,52 @@
 **🌐 不止这台 Mac**
 
 - SSH 远程主机：服务器上的会话和本地会话并排显示
-- iPhone 与 Apple Watch Buddy：灵动岛、锁屏、StandBy
-- 蓝牙连接的 ESP32 桌面小屏
 - 推送到手机或群聊：Bark、ntfy、钉钉、飞书、企业微信、Slack、Telegram，默认只在你离开时推
 - Webhook 转发原始事件，方便接自己的自动化
-- 7 种界面语言；签名公证，自动更新
+- 7 种界面语言
 
 </td>
 </tr>
 </table>
 
-<p align="center">
-  <img src="docs/images/readme-approval-zh.png" width="640" alt="审批卡片：在刘海上批准或拒绝一条 Bash 命令"><br>
-  <sub>不离开编辑器，直接批准工具调用……</sub>
-</p>
-<p align="center">
-  <img src="docs/images/readme-question-zh.png" width="640" alt="提问卡片：在刘海上选择 Agent 问题的答案"><br>
-  <sub>……或者就在刘海里回答 Agent 的提问。</sub>
-</p>
 
 ## 支持的工具
 
 <table>
 <tr>
-<td align="center" width="16%"><img src="docs/images/mascots/claude.gif" width="48" alt=""><br><sub><b>Claude Code</b></sub></td>
-<td align="center" width="16%"><img src="docs/images/mascots/codex.gif" width="48" alt=""><br><sub><b>Codex</b></sub></td>
-<td align="center" width="16%"><img src="docs/images/mascots/gemini.gif" width="48" alt=""><br><sub><b>Gemini CLI</b></sub></td>
-<td align="center" width="16%"><img src="docs/images/mascots/cursor.gif" width="48" alt=""><br><sub><b>Cursor</b></sub></td>
-<td align="center" width="16%"><img src="docs/images/mascots/grok.gif" width="48" alt=""><br><sub><b>Grok CLI</b></sub></td>
-<td align="center" width="16%"><img src="docs/images/mascots/opencode.gif" width="48" alt=""><br><sub><b>OpenCode</b></sub></td>
+<td align="center" width="16%"><img src="Sources/CodeIsland/Resources/cli-icons/claude.png" width="48" alt=""><br><sub><b>Claude Code</b></sub></td>
+<td align="center" width="16%"><img src="Sources/CodeIsland/Resources/cli-icons/codex.png" width="48" alt=""><br><sub><b>Codex</b></sub></td>
+<td align="center" width="16%"><img src="Sources/CodeIsland/Resources/cli-icons/gemini.png" width="48" alt=""><br><sub><b>Gemini CLI</b></sub></td>
+<td align="center" width="16%"><img src="Sources/CodeIsland/Resources/cli-icons/cursor.png" width="48" alt=""><br><sub><b>Cursor</b></sub></td>
+<td align="center" width="16%"><img src="Sources/CodeIsland/Resources/cli-icons/grok.png" width="48" alt=""><br><sub><b>Grok CLI</b></sub></td>
+<td align="center" width="16%"><img src="Sources/CodeIsland/Resources/cli-icons/opencode.png" width="48" alt=""><br><sub><b>OpenCode</b></sub></td>
 </tr>
 <tr>
-<td align="center"><img src="docs/images/mascots/qoder.gif" width="48" alt=""><br><sub><b>Qoder</b></sub></td>
-<td align="center"><img src="docs/images/mascots/trae.gif" width="48" alt=""><br><sub><b>Trae</b></sub></td>
-<td align="center"><img src="docs/images/mascots/copilot.gif" width="48" alt=""><br><sub><b>Copilot CLI</b></sub></td>
-<td align="center"><img src="docs/images/mascots/factory.gif" width="48" alt=""><br><sub><b>Factory Droid</b></sub></td>
-<td align="center"><img src="docs/images/mascots/codebuddy.gif" width="48" alt=""><br><sub><b>CodeBuddy</b></sub></td>
-<td align="center"><img src="docs/images/mascots/qwen.gif" width="48" alt=""><br><sub><b>Qwen Code</b></sub></td>
+<td align="center"><img src="Sources/CodeIsland/Resources/cli-icons/qoder.png" width="48" alt=""><br><sub><b>Qoder</b></sub></td>
+<td align="center"><img src="Sources/CodeIsland/Resources/cli-icons/trae.png" width="48" alt=""><br><sub><b>Trae</b></sub></td>
+<td align="center"><img src="Sources/CodeIsland/Resources/cli-icons/copilot.png" width="48" alt=""><br><sub><b>Copilot CLI</b></sub></td>
+<td align="center"><img src="Sources/CodeIsland/Resources/cli-icons/factory.png" width="48" alt=""><br><sub><b>Factory Droid</b></sub></td>
+<td align="center"><img src="Sources/CodeIsland/Resources/cli-icons/codebuddy.png" width="48" alt=""><br><sub><b>CodeBuddy</b></sub></td>
+<td align="center"><img src="Sources/CodeIsland/Resources/cli-icons/qwen.png" width="48" alt=""><br><sub><b>Qwen Code</b></sub></td>
 </tr>
 <tr>
-<td align="center"><img src="docs/images/mascots/kimi.gif" width="48" alt=""><br><sub><b>Kimi Code CLI</b></sub></td>
-<td align="center"><img src="docs/images/mascots/cline.gif" width="48" alt=""><br><sub><b>Cline</b></sub></td>
-<td align="center"><img src="docs/images/mascots/pi.gif" width="48" alt=""><br><sub><b>Pi / Oh My Pi</b></sub></td>
-<td align="center"><img src="docs/images/mascots/hermes.gif" width="48" alt=""><br><sub><b>Hermes</b></sub></td>
-<td align="center"><img src="docs/images/mascots/openclaw.gif" width="48" alt=""><br><sub><b>OpenClaw</b></sub></td>
+<td align="center"><img src="Sources/CodeIsland/Resources/cli-icons/kimi.png" width="48" alt=""><br><sub><b>Kimi Code CLI</b></sub></td>
+<td align="center"><img src="Sources/CodeIsland/Resources/cli-icons/cline.png" width="48" alt=""><br><sub><b>Cline</b></sub></td>
+<td align="center"><img src="Sources/CodeIsland/Resources/cli-icons/pi.png" width="48" alt=""><br><sub><b>Pi / Oh My Pi</b></sub></td>
+<td align="center"><img src="Sources/CodeIsland/Resources/cli-icons/hermes.png" width="48" alt=""><br><sub><b>Hermes</b></sub></td>
+<td align="center"><img src="Sources/CodeIsland/Resources/cli-icons/openclaw.png" width="48" alt=""><br><sub><b>OpenClaw</b></sub></td>
 <td align="center"><img src="Sources/CodeIsland/Resources/cli-icons/antigravity.png" width="40" alt=""><br><sub><b>Google Antigravity</b></sub></td>
 </tr>
 <tr>
-<td align="center"><img src="docs/images/mascots/kiro.gif" width="48" alt=""><br><sub><b>Kiro CLI</b></sub></td>
-<td align="center"><img src="docs/images/mascots/stepfun.gif" width="48" alt=""><br><sub><b>StepFun</b></sub></td>
-<td align="center"><img src="docs/images/mascots/workbuddy.gif" width="48" alt=""><br><sub><b>WorkBuddy</b></sub></td>
+<td align="center"><img src="Sources/CodeIsland/Resources/cli-icons/kiro.png" width="48" alt=""><br><sub><b>Kiro CLI</b></sub></td>
+<td align="center"><img src="Sources/CodeIsland/Resources/cli-icons/stepfun.png" width="48" alt=""><br><sub><b>StepFun</b></sub></td>
+<td align="center"><img src="Sources/CodeIsland/Resources/cli-icons/workbuddy.png" width="48" alt=""><br><sub><b>WorkBuddy</b></sub></td>
 <td align="center"><img src="Sources/CodeIsland/Resources/cli-icons/minimax.png" width="40" alt=""><br><sub><b>MiniMax Code CLI</b></sub></td>
 <td align="center"><img src="Sources/CodeIsland/Resources/cli-icons/dsh.png" width="40" alt=""><br><sub><b>DeepSeek Harness</b></sub></td>
-<td align="center"><img src="docs/images/mascots/aiwork.gif" width="48" alt=""><br><sub><b>AiWork</b></sub></td>
+<td align="center"><img src="Sources/CodeIsland/Resources/cli-icons/aiwork.png" width="48" alt=""><br><sub><b>AiWork</b></sub></td>
 </tr>
 <tr>
-<td align="center"><img src="docs/images/mascots/mimo.gif" width="48" alt=""><br><sub><b>MiMo Code /<br>Xiaomi MiMo</b></sub></td>
+<td align="center"><img src="Sources/CodeIsland/Resources/cli-icons/mimo.png" width="48" alt=""><br><sub><b>MiMo Code /<br>Xiaomi MiMo</b></sub></td>
 <td align="center"><sub><b>+ 更多</b><br>见下方 ↓</sub></td>
 </tr>
 </table>
@@ -147,7 +138,7 @@
 
 **知道它跑在哪：** 运行在 **tmux**、**zellij**、**Herdr** 或 **T3 Code** 里的会话，终端徽标旁会多一个标签，点击跳转会直达对应的面板或线程。
 
-**审批与提问：** hook 会等待决定的工具，都能直接在刘海上批准或回答——Claude Code、Codex、Gemini CLI、Qoder、Qwen Code、Trae CLI Next、ZCode、OpenCode、MiMo Code / Xiaomi MiMo、Pi / Oh My Pi、DeepSeek Harness 等；MiniMax Code CLI 限 mcode 允许 hook 等待的 10 秒内。hook 无法回传决定的工具（Google Antigravity、AiWork）以只读方式显示，审批仍在它们自己的界面里完成。
+**审批与提问：** 只展示、不处理。等待权限确认或提问的会话会标记为阻塞中，你在 Agent 自己的界面里作答。
 
 <details>
 <summary><b>各集成安装在哪里</b></summary>
@@ -186,34 +177,7 @@ CodeIsland 启动时会自动写入以下配置，配置被改动时会自动修
 
 ## 安装
 
-### Homebrew（推荐）
-
-```bash
-brew tap wxtsky/tap
-brew install --cask codeisland
-```
-
-### 手动下载
-
-1. 从 [最新 Release](https://github.com/wxtsky/CodeIsland/releases/latest) 下载 `CodeIsland.dmg`
-2. 把 `CodeIsland.app` 拖进「应用程序」
-3. 启动后，会自动为检测到的所有 AI 工具安装 hook
-
-App 已签名并经过 Apple 公证，通过 Sparkle 自动更新。
-
-### iPhone 与 Apple Watch Buddy
-
-<a href="https://apps.apple.com/us/app/code-island-buddy/id6773881129">Code Island Buddy</a> 在 App Store 免费下载，无需账号和服务器。它把 Mac 上的会话同步到灵动岛、锁屏、StandBy 和 Apple Watch，也能直接在手机上审批、回答提问。
-
-1. 在 Mac 上打开 **设置 → Buddy → iPhone Buddy**，勾选「允许 iPhone Buddy 发现这台 Mac」。
-2. 在同一 Wi-Fi 下打开 App 完成配对，已连接的设备会列在开关下方。
-3. macOS 弹出权限请求时，**本地网络和蓝牙都要允许**。App 在前台时走本地网络传完整快照；退到后台后，靠蓝牙传压缩摘要来刷新实时活动和手表。
-
-companion 源码就在本仓库的 `ios/CodeIslandCompanion` 和 `apple-companion` 目录。
-
-### 硬件桌宠 Buddy（ESP32）
-
-一块通过蓝牙驱动的 ESP32 桌面小屏：Agent 空闲时睡觉，干活时敲键盘，需要你审批或回答时冲你招手。开发板型号、购买参考、固件烧录和配对步骤见 **[hardware/README.md](hardware/README.md)**。Mac 端开关在 **设置 → Buddy**。
+这个 fork 不提供预编译版本，也不会自动更新。请从源码构建（见[从源码构建](#从源码构建)），把 `.build/release/CodeIsland.app` 拷到「应用程序」；启动时会自动为检测到的每个 AI 工具安装 hook。
 
 ## 配置说明
 
@@ -225,7 +189,7 @@ companion 源码就在本仓库的 `ios/CodeIslandCompanion` 和 `apple-companio
 
 Codex 不会执行没审核过的 hook。安装后启动 Codex，它会提示 `1 hook needs review before it can run.`，运行 `/hooks`，审核并信任 CodeIsland 的条目即可。审核之前 Codex 会静默忽略这些 hook，不报任何错，看起来就像 CodeIsland 不支持 Codex。Codex 会在 `~/.codex/config.toml` 的 `[hooks.state]` 里为每个已信任的 hook 记录内容哈希，所以 CodeIsland 更新后如果改写了 `~/.codex/hooks.json`，需要再审核一次。
 
-Codex 自动审查（Auto Review）仍由 Codex 处理。某一轮使用自动审查时，CodeIsland 会把它的权限请求交还给 Codex，不代替它批准或拒绝。审查方取自本地 rollout 中该轮的 `turn_context`，因此在 Codex 桌面端权限菜单里的选择同样生效；读不到时再看 `config.toml` 里的 `approvals_reviewer`。设为人工审批的轮次和提问仍在刘海里处理。
+Codex 自动审查（Auto Review）仍由 Codex 处理。某一轮使用自动审查时，权限请求由 Codex 的审查方决定，会话不会显示为阻塞中。审查方取自本地 rollout 中该轮的 `turn_context`，因此在 Codex 桌面端权限菜单里的选择同样生效；读不到时再看 `config.toml` 里的 `approvals_reviewer`。
 
 Codex 回合进行中、且没有工具在运行时，收起状态的刘海会显示 Agent 最新的公开输出。隐藏推理、加密内容、工具结果和内部子 Agent 消息永远不会显示。
 
@@ -310,7 +274,7 @@ Cowork 跑在 Claude Desktop 的沙盒里，hook 不会触发，所以 CodeIslan
 
 <br>
 
-**设置 → 行为 → 推送通知** 可以把审批、提问（附编号选项）、完成、整轮出错和跟进提醒推送到 Bark、ntfy、钉钉、飞书 / Lark、企业微信、Slack 或 Telegram。可以同时启用多个通道，每个通道单独选择推送哪些事件，「发送测试」按钮会显示服务端的真实返回。默认只在你离开时推送（锁屏、屏保、显示器睡眠，或键盘鼠标 5 分钟没有操作），子 Agent 的回合不推送。命令和消息会经过和应用其他部分相同的凭据脱敏。推送只负责通知，审批仍需回到 Mac 上操作。
+**设置 → 行为 → 推送通知** 可以把阻塞中的会话（它在等的审批或提问，附编号选项）、完成、整轮出错和跟进提醒推送到 Bark、ntfy、钉钉、飞书 / Lark、企业微信、Slack 或 Telegram。可以同时启用多个通道，每个通道单独选择推送哪些事件，「发送测试」按钮会显示服务端的真实返回。默认只在你离开时推送（锁屏、屏保、显示器睡眠，或键盘鼠标 5 分钟没有操作），子 Agent 的回合不推送。命令和消息会经过和应用其他部分相同的凭据脱敏。推送只负责通知，审批和提问仍在 Agent 里处理。
 
 </details>
 
@@ -321,37 +285,33 @@ AI 工具（Claude Code / Codex / Gemini / Cursor / …）
   └─ 触发 hook ─→ codeisland-bridge（原生 Swift 小程序）
                     └─ Unix socket /tmp/codeisland-<uid>.sock
                          └─ CodeIsland 实时更新刘海
-                              └─ 可选：iPhone / Watch / ESP32 Buddy、推送、Webhook
+                              └─ 可选：推送、Webhook
 ```
 
-CodeIsland 往每个工具自己的配置里装一个轻量 hook。工具触发事件时（会话开始、工具调用、权限请求、提问、结束），bridge 把事件以 JSON 形式经本机 Unix socket 转发过来，刘海立即更新。需要你做决定的事件，答案也沿同一条路回传。
+CodeIsland 往每个工具自己的配置里装一个轻量 hook。工具触发事件时（会话开始、工具调用、权限请求、提问、结束），bridge 把事件以 JSON 形式经本机 Unix socket 转发过来，刘海立即更新。bridge 从不等待决定，Agent 始终在自己的界面里询问。
 
-**隐私：** 除非你主动开启，事件不会离开你的 Mac。CodeIsland 发出的网络请求只有：Sparkle 更新检查；以及仅在你打开时才有的 Claude 套餐额度查询（用你自己的 Claude Code 登录请求 `api.anthropic.com`）、发往你所配置地址的 Webhook 转发，以及发往你所配置服务的推送。
+**隐私：** 除非你主动开启，事件不会离开你的 Mac。CodeIsland 默认不发出任何网络请求，只有在你打开时才会有：Claude 套餐额度查询（用你自己的 Claude Code 登录请求 `api.anthropic.com`）、发往你所配置地址的 Webhook 转发，以及发往你所配置服务的推送。
 
 ## 设置
 
 | 页面 | 内容 |
 |------|------|
 | **通用** | 语言、开机启动、显示器选择 |
-| **行为** | 自动展开（审批与提问分开设置）、悬停展开延迟、智能抑制、完成提示方式、跟进提醒、会话清理、静默规则、自动放行、推送通知、Webhook |
+| **行为** | 悬停展开延迟、智能抑制、完成提示方式、跟进提醒、会话清理、静默规则、推送通知、Webhook |
 | **外观** | 面板尺寸、刘海宽度、字号、回复行数、展开 / 收起速度、项目名、Git 分支、任务进度、会话回顾、模型标签、用量统计、套餐额度 |
-| **角色** | 预览所有像素角色和它们的动画 |
 | **声音** | 按事件的 8-bit 音效、音量、静默时段、离开时自动静音 |
-| **快捷键** | 全局快捷键：开关面板、批准、拒绝、始终允许、跳过、跳转 |
+| **快捷键** | 全局快捷键：开关面板、跳转 |
 | **远程** | SSH 主机及每台主机的目录过滤 |
 | **Hooks** | 各工具安装状态、重新安装 / 卸载、额外配置目录、Claude Desktop Cowork、自定义 CLI |
-| **Buddy** | iPhone / Apple Watch 配对、ESP32 硬件桌宠 |
-| **关于** | 版本、本版本更新说明、检查更新、导出诊断信息 |
+| **关于** | 版本、本版本更新说明、导出诊断信息 |
 
 ### 键盘快捷键
 
 | 快捷键 | 功能 | 默认 |
 |--------|------|------|
 | <kbd>⌘</kbd><kbd>⇧</kbd><kbd>I</kbd> | 展开 / 收起灵动岛 | 开启 |
-| <kbd>⌘</kbd><kbd>⇧</kbd><kbd>A</kbd> | 批准当前显示的请求 | 关闭 |
-| <kbd>⌘</kbd><kbd>⇧</kbd><kbd>D</kbd> | 拒绝当前显示的请求 | 关闭 |
 
-所有快捷键都可以在 **设置 → 快捷键** 里改绑，还能给「始终允许」「跳过问题」「跳转到终端」绑定快捷键。启用后的批准 / 拒绝快捷键会以角标形式显示在审批卡片上。
+所有快捷键都可以在 **设置 → 快捷键** 里改绑，还能给「跳转到终端」绑定快捷键。
 
 ## 从源码构建
 
@@ -361,7 +321,7 @@ CodeIsland 往每个工具自己的配置里装一个轻量 hook。工具触发�
 git clone https://github.com/wxtsky/CodeIsland.git
 cd CodeIsland
 
-# 开发：debug 构建并启动（Buddy 蓝牙需要用下面打包出的 .app）
+# 开发：debug 构建并启动
 swift build && ./.build/debug/CodeIsland
 
 # 发布：通用二进制（Apple Silicon + Intel）

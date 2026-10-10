@@ -131,7 +131,7 @@ final class RemoteHookHermesStoreTests: XCTestCase {
         let capture = buildStore(home: defaultHome) + """
 
             sent = []
-            hook._send_event = lambda payload, expects_response: sent.append(payload)
+            hook._send_event = lambda payload: sent.append(payload)
             hook._get_tty = lambda: None
             hook.main()
             print(json.dumps(sent[0]))

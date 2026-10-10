@@ -9,17 +9,15 @@ extension Notification.Name {
     static let codeIslandDidJumpToSession = Notification.Name("CodeIslandDidJumpToSession")
 }
 
-/// Follow-up reminders: approvals and questions still waiting, and finished
+/// Follow-up reminders: sessions still blocked on the user, and finished
 /// turns nobody looked at, get another nudge after the configured interval.
 ///
 /// Timing lives in the pure `FollowUpReminderScheduler`; this controller feeds
-/// it from `AppState` (queues, display-only waits, completions, surface,
-/// jumps), arms at most one wake-up, and turns due reminders into the island's
-/// own reactions — the matching sound, the card re-opened when the island is
-/// folded away, or a collapsed-state hint when auto-expand is off. A
-/// display-only wait (Claude Desktop Cowork, Cursor's in-IDE question, AiWork…)
-/// has no card to open: it only chimes and hints. With the setting off it
-/// holds no entries and arms nothing.
+/// it from `AppState` (display-only waits, completions, surface, jumps), arms
+/// at most one wake-up, and turns due reminders into the island's own
+/// reactions — the matching sound and a collapsed-state hint. A wait is
+/// answered in the agent itself, so it only chimes and hints. With the
+/// setting off it holds no entries and arms nothing.
 ///
 /// Other channels (push to a phone) subscribe with `addReminderHandler`; they
 /// receive every reminder, including `.deferred` ones that came due while the
@@ -133,17 +131,6 @@ final class FollowUpReminderController {
         reschedule(now: now)
     }
 
-    /// Permission / question queues or dismissals changed. Display-only waits
-    /// are not re-read here: this runs synchronously inside every queue
-    /// mutation, where a session whose request was just answered can still
-    /// show its waiting status for a moment.
-    func waitingChanged() {
-        guard applyInterval() else { return }
-        let now = clock()
-        syncQueues(now: now)
-        reschedule(now: now)
-    }
-
     /// A session's display-only wait began, changed kind or ended (see
     /// AppState+DisplayOnlyWaits). `began` is a wait that just started: its
     /// reminders start over even if an earlier wait's entry was never seen to
@@ -171,9 +158,8 @@ final class FollowUpReminderController {
     }
 
     /// The island's surface changed. Opening the session list shows every
-    /// session — pending cards inline, finished turns included — so it counts
-    /// as having seen all of it; an approval / question card counts for its
-    /// own item.
+    /// session — waits and finished turns included — so it counts as having
+    /// seen all of it.
     func surfaceChanged(_ surface: IslandSurface) {
         guard !scheduler.isEmpty || !hintedKeys.isEmpty else { return }
         switch surface {
@@ -181,10 +167,6 @@ final class FollowUpReminderController {
             hintedKeys.removeAll()
             scheduler.silenceAll(kind: .completion)
             reschedule(now: clock())
-        case .approvalCard(let sid):
-            hintedKeys.remove(Key(.approval, sid))
-        case .questionCard(let sid):
-            hintedKeys.remove(Key(.question, sid))
         case .completionCard, .collapsed:
             break
         }
@@ -246,7 +228,7 @@ final class FollowUpReminderController {
         var delivered: [FollowUpReminder] = []
         for reminder in due {
             let key = Key(reminder.kind, reminder.sessionId)
-            guard isStillPending(reminder) else {
+            guard isStillPending(key) else {
                 scheduler.silence(key)
                 continue
             }
@@ -264,7 +246,7 @@ final class FollowUpReminderController {
                 // State may have moved while the tab check was off-actor. An
                 // entry the sync has since handed to the session's next
                 // request is that request's now: leave it alone.
-                guard isStillPending(reminder) else { continue }
+                guard isStillPending(key) else { continue }
                 if inFront {
                     // The user is in front of it right now: nothing plays on
                     // the Mac. A remote channel may still take it (the Mac
@@ -306,19 +288,9 @@ final class FollowUpReminderController {
         return scheduler.isEnabled
     }
 
-    /// Both origins; only from a settled state (tick, settings).
+    /// Only from a settled state (tick, settings).
     private func syncWaiting(now: Date) {
-        syncQueues(now: now)
         syncDisplayOnly(now: now)
-    }
-
-    /// Keyed by the request each card shows, so a session's next request is
-    /// reminded about from scratch rather than inheriting the attempts or the
-    /// silence of the one before it.
-    private func syncQueues(now: Date) {
-        guard let appState else { return }
-        scheduler.sync(kind: .approval, requests: appState.visiblePermissionRequestIds, now: now)
-        scheduler.sync(kind: .question, requests: appState.pendingQuestionRequestIds, now: now)
     }
 
     private func syncDisplayOnly(now: Date) {
@@ -333,31 +305,11 @@ final class FollowUpReminderController {
         }
     }
 
-    /// Still waiting, and — for a request the island holds — still the
-    /// same request the reminder was about.
-    private func isStillPending(_ reminder: FollowUpReminder) -> Bool {
-        guard let appState, let requestId = reminder.requestId else {
-            return isStillPending(Key(reminder.kind, reminder.sessionId))
-        }
-        switch reminder.kind {
-        case .approval:
-            return appState.visiblePermissionRequestIds[reminder.sessionId] == requestId
-        case .question:
-            return appState.pendingQuestionRequestIds[reminder.sessionId] == requestId
-        case .completion:
-            return isStillPending(Key(reminder.kind, reminder.sessionId))
-        }
-    }
-
     private func isStillPending(_ key: Key) -> Bool {
         guard let appState else { return false }
         switch key.kind {
-        case .approval:
-            return appState.visiblePermissionSessionIds.contains(key.sessionId)
-                || appState.displayOnlyWaitKind(forSession: key.sessionId) == .approval
-        case .question:
-            return appState.pendingQuestion(forSession: key.sessionId) != nil
-                || appState.displayOnlyWaitKind(forSession: key.sessionId) == .question
+        case .approval, .question:
+            return appState.displayOnlyWaitKind(forSession: key.sessionId) == key.kind
         case .completion:
             // Any new activity takes the session out of idle; a new finished
             // turn re-tracks it from scratch.
@@ -373,10 +325,6 @@ final class FollowUpReminderController {
         switch appState.surface {
         case .sessionList:
             return true
-        case .approvalCard(let sid):
-            return key.kind == .approval && sid == key.sessionId
-        case .questionCard(let sid):
-            return key.kind == .question && sid == key.sessionId
         case .completionCard(let sid):
             return key.kind == .completion && sid == key.sessionId
         case .collapsed:
@@ -397,27 +345,15 @@ final class FollowUpReminderController {
     }
 
     private func perform(_ reminders: [FollowUpReminder]) {
-        guard !reminders.isEmpty, let appState else { return }
+        guard !reminders.isEmpty else { return }
         for reminder in reminders { notify(reminder) }
 
-        // One card at a time: the most urgent item gets its card back when the
-        // island is folded away; the rest light the hint. A display-only wait
-        // has no card on the island — it can only be answered where it was
-        // asked — so it always hints.
-        var reopened: Key?
-        if appState.surface == .collapsed,
-           let head = reminders.first(where: { $0.kind != .completion && $0.origin == .island }),
-           reopenCard(for: head) {
-            reopened = Key(head.kind, head.sessionId)
-        }
-        var hinted = false
+        // A wait can only be answered where it was asked, so every reminder
+        // lights the collapsed-state hint.
         for reminder in reminders {
-            let key = Key(reminder.kind, reminder.sessionId)
-            guard key != reopened else { continue }
-            hintedKeys.insert(key)
-            hinted = true
+            hintedKeys.insert(Key(reminder.kind, reminder.sessionId))
         }
-        if hinted { hintPulse += 1 }
+        hintPulse += 1
 
         // Same sound as the original event, once per kind per tick — a turn
         // that died rings the error jingle again, not "done". The regular
@@ -432,28 +368,6 @@ final class FollowUpReminderController {
             if !sounds.contains(sound) { sounds.append(sound) }
         }
         sounds.forEach(playSound)
-    }
-
-    /// Re-open the item's card, honouring the same switch the first card did:
-    /// with "auto-expand on approval" / "auto-expand on question" off, the
-    /// item only chimes and hints (a question keeps its click-to-open badge).
-    private func reopenCard(for reminder: FollowUpReminder) -> Bool {
-        guard let appState else { return false }
-        let sid = reminder.sessionId
-        switch reminder.kind {
-        case .approval:
-            guard AppState.autoExpandOnPermission() else { return false }
-            appState.activeSessionId = sid
-            withAnimation(NotchAnimation.open) { appState.surface = .approvalCard(sessionId: sid) }
-            return true
-        case .question:
-            guard AppState.autoExpandOnQuestion() else { return false }
-            appState.activeSessionId = sid
-            withAnimation(NotchAnimation.open) { appState.surface = .questionCard(sessionId: sid) }
-            return true
-        case .completion:
-            return false
-        }
     }
 
     private func notify(_ reminder: FollowUpReminder) {

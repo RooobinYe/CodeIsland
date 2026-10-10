@@ -59,8 +59,6 @@ final class SessionListOrderingTests: XCTestCase {
 
     func testNeedsYouFirstThenWorkingThenTheRestByRecentActivity() {
         let now = Date()
-        // The request queued first is the older one and sorts last by name,
-        // so only the queue rank can put it on top.
         let sessions: [String: SessionSnapshot] = [
             "a-idle-old": session(.idle, prompt: "p", activity: now.addingTimeInterval(-600)),
             "b-running": session(.running, started: now.addingTimeInterval(-300)),
@@ -70,22 +68,11 @@ final class SessionListOrderingTests: XCTestCase {
             "z-approval": session(.waitingApproval, activity: now.addingTimeInterval(-500)),
             "g-stopped": stoppedSession(activity: now.addingTimeInterval(-100)),
         ]
-        let order = SessionListOrdering.order(sessions, requestRank: ["z-approval": 0, "c-question": 1])
-        XCTAssertEqual(order, [
-            "z-approval", "c-question",      // needs you, in queue order
+        XCTAssertEqual(SessionListOrdering.order(sessions), [
+            "c-question", "z-approval",      // needs you, most recent activity first
             "e-thinking", "b-running",       // working, newest session first
             "d-idle-new", "g-stopped", "a-idle-old", // the rest, most recent activity first
         ])
-        // Without a queue position, needs-you sessions go by recent activity.
-        XCTAssertEqual(Array(SessionListOrdering.order(sessions).prefix(2)), ["c-question", "z-approval"])
-    }
-
-    func testApprovalsRankBeforeQuestionsInTheQueue() {
-        let rank = SessionListOrdering.requestRank(
-            permissionSessionIds: ["s2", "s1", "s2"],
-            questionSessionIds: ["s3", "s1"]
-        )
-        XCTAssertEqual(rank, ["s2": 0, "s1": 1, "s3": 3])
     }
 
     func testAWorkingSessionsActivityDoesNotReshuffleTheList() {
@@ -106,29 +93,6 @@ final class SessionListOrderingTests: XCTestCase {
             ($0, session(.idle, prompt: "p", activity: date, started: date))
         })
         XCTAssertEqual(SessionListOrdering.order(sessions), ["a", "b", "c"])
-    }
-
-    func testAppStateOrdersByItsRequestQueues() async throws {
-        // "zeta" asked first but is older and sorts last by name: only the
-        // queue can put it on top.
-        let state = AppState()
-        let now = Date()
-        state.sessions = [
-            "idle": session(.idle, prompt: "p", activity: now),
-            "alpha": session(.waitingApproval, activity: now.addingTimeInterval(-5)),
-            "zeta": session(.waitingApproval, activity: now.addingTimeInterval(-300)),
-        ]
-        let releaseFirst = await DemoRequests.enqueuePermission(state, event: try DemoRequests.hookEvent([
-            "hook_event_name": "PermissionRequest", "session_id": "zeta", "tool_name": "Bash",
-            "tool_input": ["command": "ls"],
-        ]))
-        let releaseSecond = await DemoRequests.enqueuePermission(state, event: try DemoRequests.hookEvent([
-            "hook_event_name": "PermissionRequest", "session_id": "alpha", "tool_name": "Bash",
-            "tool_input": ["command": "pwd"],
-        ]))
-        defer { releaseSecond(); releaseFirst() }
-        XCTAssertEqual(state.sessionListOrder(), ["zeta", "alpha", "idle"],
-                       "the request the inline buttons can answer comes first")
     }
 
     // MARK: - Held order
@@ -255,15 +219,13 @@ final class SessionListOrderingTests: XCTestCase {
         let saved = L10n.shared.language
         defer { L10n.shared.language = saved }
         let keys = ["session_list_density", "session_list_density_desc", "max_visible_sessions_desc_compact",
-                    "session_inline_deny", "session_inline_allow_once", "session_inline_always",
-                    "session_inline_queued_hint", "session_a11y_prompt", "session_a11y_reply",
+                    "session_a11y_prompt", "session_a11y_reply",
                     "session_a11y_running_tool"] + SessionListDensity.allCases.map(\.titleKey)
         for language in ["en", "de", "zh", "zh-Hant", "ja", "ko", "tr"] {
             L10n.shared.language = language
             for key in keys {
                 XCTAssertNotEqual(L10n.shared[key], key, "\(language) lacks \(key)")
             }
-            XCTAssertTrue(L10n.shared["session_inline_always"].contains("%@"), language)
             XCTAssertTrue(L10n.shared["session_a11y_running_tool"].contains("%@"), language)
         }
     }
@@ -328,12 +290,10 @@ final class CompactSessionListLayoutTests: XCTestCase {
         super.setUp()
         _ = NSApplication.shared
         sandbox = DefaultsSandbox(keys: DefaultsSandbox.allSettingsKeys)
-        MascotAnimationGate.shared.setPanelVisible(false)
         UserDefaults.standard.set(SessionListDensity.compact.rawValue, forKey: SettingsKey.sessionListDensity)
     }
 
     override func tearDown() {
-        MascotAnimationGate.shared.setPanelVisible(true)
         sandbox?.restore()
         super.tearDown()
     }
@@ -397,9 +357,7 @@ final class SessionListScrollWidthTests: XCTestCase {
     func testTheScrollingListKeepsItsFullWidth() async throws {
         _ = NSApplication.shared
         let sandbox = DefaultsSandbox(keys: DefaultsSandbox.allSettingsKeys)
-        MascotAnimationGate.shared.setPanelVisible(false)
         defer {
-            MascotAnimationGate.shared.setPanelVisible(true)
             sandbox.restore()
         }
         let demo = try await GalleryDemo.list(count: 8, lang: .en, quota: false)

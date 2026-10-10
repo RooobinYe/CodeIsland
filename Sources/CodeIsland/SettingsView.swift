@@ -85,7 +85,7 @@ struct SettingsView: View {
                 }
             }
             .listStyle(.sidebar)
-            .navigationSplitViewColumnWidth(200)
+            .navigationSplitViewColumnWidth(min: 160, ideal: 200, max: 300)
         } detail: {
             Group {
                 switch selectedPage {
@@ -1226,9 +1226,6 @@ private struct AppearancePage: View {
     @AppStorage(SettingsKey.showSessionRecap) private var showSessionRecap = SettingsDefaults.showSessionRecap
     @AppStorage(SettingsKey.showModelLabel) private var showModelLabel = SettingsDefaults.showModelLabel
     @AppStorage(SettingsKey.showProjectName) private var showProjectName = SettingsDefaults.showProjectName
-    @AppStorage(SettingsKey.showUsageStats) private var showUsageStats = SettingsDefaults.showUsageStats
-    @AppStorage(SettingsKey.showClaudeQuota) private var showClaudeQuota = SettingsDefaults.showClaudeQuota
-    @AppStorage(SettingsKey.claudeQuotaChip) private var claudeQuotaChip = SettingsDefaults.claudeQuotaChip
     @AppStorage(SettingsKey.collapsedWidthScale) private var collapsedWidthScale = SettingsDefaults.collapsedWidthScale
     @AppStorage(SettingsKey.notchHeightMode) private var notchHeightModeRaw = SettingsDefaults.notchHeightMode
     @AppStorage(SettingsKey.customNotchHeight) private var customNotchHeight = SettingsDefaults.customNotchHeight
@@ -1394,26 +1391,6 @@ private struct AppearancePage: View {
                         .font(.system(size: 11))
                         .foregroundStyle(.tertiary)
                 }
-                VStack(alignment: .leading, spacing: 2) {
-                    Toggle(l10n["show_usage_stats"], isOn: $showUsageStats)
-                    Text(l10n["show_usage_stats_desc"])
-                        .font(.system(size: 11))
-                        .foregroundStyle(.tertiary)
-                }
-                VStack(alignment: .leading, spacing: 2) {
-                    Toggle(l10n["show_claude_quota"], isOn: $showClaudeQuota)
-                    Text(l10n["show_claude_quota_desc"])
-                        .font(.system(size: 11))
-                        .foregroundStyle(.tertiary)
-                }
-                Picker(l10n["claude_quota_chip"], selection: $claudeQuotaChip) {
-                    Text(l10n["quota_chip_off"]).tag(ClaudeQuotaChipMode.off.rawValue)
-                    Text(l10n["quota_chip_auto"]).tag(ClaudeQuotaChipMode.auto.rawValue)
-                    Text(l10n["quota_chip_session"]).tag(ClaudeQuotaChipMode.session.rawValue)
-                    Text(l10n["quota_chip_weekly"]).tag(ClaudeQuotaChipMode.weeklyAll.rawValue)
-                    Text(l10n["quota_chip_weekly_model"]).tag(ClaudeQuotaChipMode.weeklyScoped.rawValue)
-                }
-                .disabled(!showClaudeQuota)
             }
         }
         .formStyle(.grouped)

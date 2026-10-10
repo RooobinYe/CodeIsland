@@ -80,13 +80,6 @@ enum SettingsKey {
     static let showSessionRecap = "showSessionRecap"
     static let showModelLabel = "showModelLabel"
 
-    // Token-usage footer (local Claude transcript aggregation)
-    static let showUsageStats = "showUsageStats"
-
-    // Claude plan limits (Anthropic usage endpoint via the Claude Code login)
-    static let showClaudeQuota = "showClaudeQuota"
-    static let claudeQuotaChip = "claudeQuotaChip"              // ClaudeQuotaChipMode raw value
-
     // Completion notification: "expand" | "glance" | "off". Successor of the
     // boolean autoExpandOnCompletion — see AppState.completionStyle migration.
     static let completionNotificationStyle = "completionNotificationStyle"
@@ -106,9 +99,6 @@ enum SettingsKey {
     static let maxToolHistory = "maxToolHistory"
     /// Session cards: agent checklist progress (TaskCreate / TodoWrite / update_plan).
     static let showTaskProgress = "showTaskProgress"
-
-    // Session grouping
-    static let sessionGroupingMode = "sessionGroupingMode"
 
     // Tool status display
     static let showToolStatus = "showToolStatus"              // true = detailed, false = simple
@@ -183,16 +173,12 @@ struct SettingsDefaults {
     static let showGitBranch = true
     static let showSessionRecap = true
     static let showModelLabel = false
-    static let showUsageStats = true
-    static let showClaudeQuota = false
-    static let claudeQuotaChip = "auto"
 
     static let rotationInterval = 5
 
     static let maxToolHistory = 20
     static let showTaskProgress = true
 
-    static let sessionGroupingMode = "all"
 
     static let showToolStatus = true
 
@@ -263,13 +249,9 @@ class SettingsManager {
             SettingsKey.showGitBranch: SettingsDefaults.showGitBranch,
             SettingsKey.showSessionRecap: SettingsDefaults.showSessionRecap,
             SettingsKey.showModelLabel: SettingsDefaults.showModelLabel,
-            SettingsKey.showUsageStats: SettingsDefaults.showUsageStats,
-            SettingsKey.showClaudeQuota: SettingsDefaults.showClaudeQuota,
-            SettingsKey.claudeQuotaChip: SettingsDefaults.claudeQuotaChip,
             SettingsKey.rotationInterval: SettingsDefaults.rotationInterval,
             SettingsKey.maxToolHistory: SettingsDefaults.maxToolHistory,
             SettingsKey.showTaskProgress: SettingsDefaults.showTaskProgress,
-            SettingsKey.sessionGroupingMode: SettingsDefaults.sessionGroupingMode,
             SettingsKey.showToolStatus: SettingsDefaults.showToolStatus,
             SettingsKey.collapsedWidthScale: SettingsDefaults.collapsedWidthScale,
             SettingsKey.excludedHookCwdSubstrings: SettingsDefaults.excludedHookCwdSubstrings,
@@ -399,11 +381,6 @@ class SettingsManager {
     var rotationInterval: Int {
         get { defaults.integer(forKey: SettingsKey.rotationInterval) }
         set { defaults.set(newValue, forKey: SettingsKey.rotationInterval) }
-    }
-
-    var sessionGroupingMode: String {
-        get { defaults.string(forKey: SettingsKey.sessionGroupingMode) ?? SettingsDefaults.sessionGroupingMode }
-        set { defaults.set(newValue, forKey: SettingsKey.sessionGroupingMode) }
     }
 
     /// Comma-separated list of substrings; any hook event whose `cwd` contains

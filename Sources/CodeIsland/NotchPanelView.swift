@@ -112,8 +112,6 @@ struct NotchPanelView: View {
     @AppStorage(SettingsKey.hideWhenNoSession) private var hideWhenNoSession = SettingsDefaults.hideWhenNoSession
     @AppStorage(SettingsKey.showToolStatus) private var showToolStatus = SettingsDefaults.showToolStatus
     @AppStorage(SettingsKey.collapsedWidthScale) private var collapsedWidthScale = SettingsDefaults.collapsedWidthScale
-    @AppStorage(SettingsKey.showClaudeQuota) private var showClaudeQuota = SettingsDefaults.showClaudeQuota
-    @AppStorage(SettingsKey.claudeQuotaChip) private var claudeQuotaChip = SettingsDefaults.claudeQuotaChip
     @AppStorage(SettingsKey.hapticOnHover) private var hapticOnHover = SettingsDefaults.hapticOnHover
     @AppStorage(SettingsKey.hapticIntensity) private var hapticIntensity = SettingsDefaults.hapticIntensity
     @AppStorage(SettingsKey.showSessionRecap) private var showSessionRecap = SettingsDefaults.showSessionRecap
@@ -132,9 +130,6 @@ struct NotchPanelView: View {
     @State private var displayedToolStatus: Bool = SettingsDefaults.showToolStatus
     /// Window height and card chrome for the completion card's reply area.
     @State private var cardSpace = CompletionCardSpace()
-    /// Measured width of the plan-limit chip (0 until first laid out) — the
-    /// bar reserves exactly this instead of guessing from the label length.
-    @State private var quotaChipWidth: CGFloat = 0
     /// Measured width of the collapsed right wing (0 until first laid out).
     @State private var rightWingWidth: CGFloat = 0
 
@@ -187,7 +182,7 @@ struct NotchPanelView: View {
         if showIdleIndicator { return idleHovered ? nw + compactWingWidth * 2 + 80 : nw + compactWingWidth * 2 }
         if !isActive { return hasNotch ? nw - 20 : nw }
         if shouldShowExpanded { return min(max(nw + 200, 580), maxPanelWidth) }
-        return collapsedBarWidth + quotaReserve.extraWidth + rightWingReserve
+        return collapsedBarWidth + rightWingReserve
     }
 
     /// Room the collapsed right wing lacks to clear the notch; 0 whenever it fits.
@@ -204,7 +199,7 @@ struct NotchPanelView: View {
     /// The panel window's width (PanelWindowController.panelSize).
     private var maxPanelWidth: CGFloat { min(620, screenWidth - 40) }
 
-    /// The collapsed active bar, before any room for the plan-limit chip.
+    /// The collapsed active bar, before any room for the right wing.
     private var collapsedBarWidth: CGFloat {
         // Immediate hover acknowledgement: a slight widen while the expand delay runs
         let prehoverExtra: CGFloat = shouldShowPrehover ? NotchHoverInteraction.prehoverWidthDelta : 0
@@ -219,31 +214,13 @@ struct NotchPanelView: View {
         return extra + toolExtra
     }
 
-    /// Room for the plan-limit chip in the collapsed bar; `.none` whenever the
-    /// chip isn't shown, which leaves the bar exactly as it is without it.
-    private var quotaReserve: QuotaChipLayout.Reserve {
-        guard showBar, !shouldShowExpanded,
-              let limit = QuotaChip.limit(appState: appState, enabled: showClaudeQuota, modeRaw: claudeQuotaChip)
-        else { return .none }
-        // Measured once laid out; the label-length estimate covers the first frame.
-        let chipWidth = quotaChipWidth > 0 ? quotaChipWidth : QuotaChip.estimatedWidth(for: limit)
-        return QuotaChipLayout.reserve(
-            chipWidth: chipWidth,
-            mascotSize: mascotSize,
-            wing: compactWingWidth,
-            statusExtra: collapsedStatusExtra,
-            hasNotch: hasNotch,
-            spareWidth: maxPanelWidth - collapsedBarWidth
-        )
-    }
-
     var body: some View {
         VStack(spacing: 0) {
             VStack(spacing: 0) {
                 if showBar {
                     // Active: compact bar — wider version when expanded
                     HStack(spacing: 0) {
-                        CompactLeftWing(appState: appState, expanded: shouldShowExpanded, mascotSize: mascotSize, hasNotch: hasNotch, showToolStatus: showToolStatus)
+                        CompactLeftWing(appState: appState, expanded: shouldShowExpanded, hasNotch: hasNotch, showToolStatus: showToolStatus)
                         if hasNotch && !shouldShowExpanded {
                             Spacer(minLength: effectiveNotchW)
                         } else if !shouldShowExpanded && showToolStatus {
@@ -259,9 +236,6 @@ struct NotchPanelView: View {
                     // doesn't expand the panel (smart suppress with the
                     // terminal frontmost); expanded cards show it inline.
                     .help(collapsedRecapTooltip)
-                    // 0 means the chip isn't drawn right now (a tool name holds
-                    // the slot) — keep the last width so the bar doesn't twitch.
-                    .onPreferenceChange(QuotaChipWidthKey.self) { if $0 > 0 { quotaChipWidth = $0 } }
                     // 0 while expanded (only the collapsed wing reports) — keep
                     // the last width for the next collapse.
                     .onPreferenceChange(CompactRightWingWidthKey.self) { if $0 > 0 { rightWingWidth = $0 } }
@@ -452,7 +426,7 @@ struct NotchPanelView: View {
                 }
             }
             // Outside onHover on purpose: the hover region moves with the bar.
-            .offset(x: quotaReserve.shift + rightWingReserve / 2)
+            .offset(x: rightWingReserve / 2)
 
             Spacer()
                 .allowsHitTesting(false)
@@ -466,11 +440,6 @@ struct NotchPanelView: View {
         // clamped to the screen.
         .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { cardSpace.recordWindowHeight($0) }
         .environment(cardSpace)
-        // The expanded header's grouping tabs: the physical notch, not the
-        // widened island, is what they must stay clear of.
-        .environment(\.sessionGroupingTabsRoom, SessionGroupingTabsLayout.room(
-            panelWidth: panelWidth, notchWidth: notchW, hasNotch: hasNotch
-        ))
         .animation(NotchAnimation.open, value: appState.surface)
     }
 }
@@ -481,12 +450,8 @@ struct NotchPanelView: View {
 private struct CompactLeftWing: View {
     var appState: AppState
     let expanded: Bool
-    let mascotSize: CGFloat
     let hasNotch: Bool
     let showToolStatus: Bool
-    @AppStorage(SettingsKey.sessionGroupingMode) private var groupingMode = SettingsDefaults.sessionGroupingMode
-    @AppStorage(SettingsKey.showClaudeQuota) private var showClaudeQuota = SettingsDefaults.showClaudeQuota
-    @AppStorage(SettingsKey.claudeQuotaChip) private var claudeQuotaChip = SettingsDefaults.claudeQuotaChip
 
     private var displaySession: SessionSnapshot? {
         let sid = appState.rotatingSessionId ?? appState.activeSessionId ?? appState.sessions.keys.sorted().first
@@ -501,9 +466,6 @@ private struct CompactLeftWing: View {
         HStack(spacing: 6) {
             if expanded {
                 AppLogoView(size: 36, showBackground: false)
-                if appState.sessions.count > 1 {
-                    SessionGroupingTabs(mode: $groupingMode)
-                }
             } else {
                 // On notch screens, show tool name only (no description, space is tight)
                 if hasNotch, showToolStatus, let tool = shownTool {
@@ -515,22 +477,6 @@ private struct CompactLeftWing: View {
                         .frame(maxWidth: ToolNameDisplay.compactMaxWidth, alignment: .leading)
                         .transition(.opacity)
                         .help(tool)
-                } else if let limit = QuotaChip.limit(appState: appState, enabled: showClaudeQuota, modeRaw: claudeQuotaChip),
-                          let snapshot = appState.claudeQuota.snapshot {
-                    // Plan-limit chip takes the tool slot while no tool is
-                    // running: window label + ring + percent, all windows in
-                    // the tooltip.
-                    QuotaChip(
-                        limit: limit,
-                        snapshot: snapshot,
-                        stale: appState.claudeQuota.lastError != nil,
-                        showsPace: QuotaChip.paceFits(mascotSize: mascotSize)
-                    )
-                        .fixedSize()
-                        .background(GeometryReader { geo in
-                            Color.clear.preference(key: QuotaChipWidthKey.self, value: geo.size.width)
-                        })
-                        .transition(.opacity)
                 }
             }
         }
@@ -554,85 +500,6 @@ private struct CompactLeftWing: View {
             let newTool = liveTool
             withAnimation(.easeInOut(duration: 0.2)) { shownTool = newTool }
         }
-    }
-}
-
-/// The expanded header's session grouping tabs.
-struct SessionGroupingTab {
-    /// SettingsKey.sessionGroupingMode value.
-    let tag: String
-    /// Drawn in the 5×7 pixel font, which has Latin capitals only — so the
-    /// tabs read the same in every language; the tooltip names them.
-    let pixelLabel: String
-    /// For a header too narrow for the words (SessionGroupingTabsLayout).
-    let shortPixelLabel: String
-    /// L10n key of the spelled-out name (tooltip, VoiceOver).
-    let nameKey: String
-
-    static let all = [
-        SessionGroupingTab(tag: "all", pixelLabel: "ALL", shortPixelLabel: "ALL", nameKey: "group_all"),
-        SessionGroupingTab(tag: "status", pixelLabel: "STATUS", shortPixelLabel: "STA", nameKey: "group_status"),
-        SessionGroupingTab(tag: "cli", pixelLabel: "AGENT", shortPixelLabel: "AGT", nameKey: "group_cli"),
-    ]
-}
-
-/// Size of the grouping tabs, and when the header is too narrow for them.
-///
-/// The expanded header sits in the menu bar: on a notched screen its left
-/// wing ends where the notch begins, and the spelled-out tabs (≈40pt wider
-/// than the old ALL / STA / CLI) fit beside a notch of up to 200pt on the
-/// narrowest (580pt) panel — MacBook notches are ≈185pt. Past that they fall
-/// back to three-letter labels rather than run under the notch.
-enum SessionGroupingTabsLayout {
-    static let pixelSize: CGFloat = 1.3
-    static let horizontalPadding: CGFloat = 5
-    static let spacing: CGFloat = 1
-    /// The drawn strip, and the taller hit target each tab gets around it.
-    static let stripHeight: CGFloat = 17
-    static let hitHeight: CGFloat = 24
-
-    /// What the expanded header's left wing puts before the tabs: its leading
-    /// padding, the 36pt logo and the spacing after it (CompactLeftWing).
-    static let leadingChrome: CGFloat = 6 + 36 + 6
-    /// Clearance kept between the tabs and the notch.
-    static let notchGap: CGFloat = 4
-
-    /// PixelText's width for `text`: 5 dots and a gap per glyph, no trailing gap.
-    static func labelWidth(_ text: String, pixelSize: CGFloat = pixelSize) -> CGFloat {
-        guard !text.isEmpty else { return 0 }
-        return CGFloat(text.count) * 6 * pixelSize - pixelSize
-    }
-
-    /// Width of the whole tab strip.
-    static func width(short: Bool) -> CGFloat {
-        let tabs = SessionGroupingTab.all
-        let labels = tabs.reduce(CGFloat(0)) { $0 + labelWidth(short ? $1.shortPixelLabel : $1.pixelLabel) }
-        return labels + CGFloat(tabs.count) * horizontalPadding * 2 + CGFloat(tabs.count - 1) * spacing
-    }
-
-    /// Room the expanded header leaves the tabs. On a notched screen that is
-    /// the wing beside the notch; elsewhere the left half of the panel (the
-    /// right half holds the buttons).
-    static func room(panelWidth: CGFloat, notchWidth: CGFloat, hasNotch: Bool) -> CGFloat {
-        let wing = hasNotch ? (panelWidth - notchWidth) / 2 : panelWidth / 2
-        return wing - leadingChrome - notchGap
-    }
-
-    static func usesShortLabels(room: CGFloat) -> Bool {
-        width(short: false) > room
-    }
-}
-
-private struct SessionGroupingTabsRoomKey: EnvironmentKey {
-    static let defaultValue: CGFloat = .infinity
-}
-
-extension EnvironmentValues {
-    /// Width the expanded header leaves the grouping tabs
-    /// (SessionGroupingTabsLayout.room), set by NotchPanelView.
-    var sessionGroupingTabsRoom: CGFloat {
-        get { self[SessionGroupingTabsRoomKey.self] }
-        set { self[SessionGroupingTabsRoomKey.self] = newValue }
     }
 }
 
@@ -1074,55 +941,6 @@ struct QuitConfirmButton: View {
     }
 }
 
-/// The grouping tabs in the 5×7 pixel font, spelled out (ALL · STATUS ·
-/// AGENT) where the header has room for them.
-private struct SessionGroupingTabs: View {
-    @Binding var mode: String
-    @Environment(\.sessionGroupingTabsRoom) private var room
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @ObservedObject private var l10n = L10n.shared
-    @State private var hoveredTag: String?
-
-    static let selectedColor = Color(red: 0.3, green: 0.85, blue: 0.4)
-    /// ≈7:1 on black — the thin pixel strokes need more than the AA minimum.
-    static let inactiveColor = Color.white.opacity(0.62)
-
-    var body: some View {
-        let layout = SessionGroupingTabsLayout.self
-        let short = layout.usesShortLabels(room: room)
-        HStack(spacing: layout.spacing) {
-            ForEach(SessionGroupingTab.all, id: \.tag) { tab in
-                let selected = mode == tab.tag
-                Button {
-                    withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.15)) { mode = tab.tag }
-                } label: {
-                    PixelText(
-                        text: short ? tab.shortPixelLabel : tab.pixelLabel,
-                        color: selected ? Self.selectedColor
-                            : (hoveredTag == tab.tag ? .white.opacity(0.9) : Self.inactiveColor),
-                        pixelSize: layout.pixelSize
-                    )
-                    .padding(.horizontal, layout.horizontalPadding)
-                    .frame(height: layout.stripHeight)
-                    .background(Rectangle().fill(selected ? .white.opacity(0.1) : .clear))
-                    // Taller than the strip it draws: a 24pt target.
-                    .frame(height: layout.hitHeight)
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .onHover { hoveredTag = $0 ? tab.tag : (hoveredTag == tab.tag ? nil : hoveredTag) }
-                // The pixel glyphs are drawn, not text: without a label
-                // VoiceOver reads nothing.
-                .help(l10n[tab.nameKey])
-                .accessibilityLabel(l10n[tab.nameKey])
-                .accessibilityAddTraits(selected ? .isSelected : [])
-            }
-        }
-        .background(Rectangle().fill(.white.opacity(0.05)).frame(height: layout.stripHeight))
-        .overlay(Rectangle().stroke(.white.opacity(0.1), lineWidth: 1).frame(height: layout.stripHeight))
-    }
-}
-
 // MARK: - Idle Indicator Bar
 
 private struct IdleIndicatorBar: View {
@@ -1214,10 +1032,7 @@ private struct SessionListView: View {
     var appState: AppState
     /// When set, only show this session (auto-expand on completion)
     var onlySessionId: String? = nil
-    @AppStorage(SettingsKey.sessionGroupingMode) private var groupingMode = SettingsDefaults.sessionGroupingMode
     @AppStorage(SettingsKey.maxVisibleSessions) private var maxVisibleSessions = SettingsDefaults.maxVisibleSessions
-    @AppStorage(SettingsKey.showUsageStats) private var showUsageStats = SettingsDefaults.showUsageStats
-    @AppStorage(SettingsKey.showClaudeQuota) private var showClaudeQuota = SettingsDefaults.showClaudeQuota
     @AppStorage(SettingsKey.sessionListDensity) private var densityRaw = SettingsDefaults.sessionListDensity
     @AppStorage(SettingsKey.contentFontSize) private var contentFontSize = SettingsDefaults.contentFontSize
     @AppStorage(SettingsKey.showProjectName) private var showProjectName = SettingsDefaults.showProjectName
@@ -1239,93 +1054,21 @@ private struct SessionListView: View {
         orderFreeze.apply(appState.sessionListOrder())
     }
 
-    private var groupedSessions: [(header: String, source: String?, ids: [String])] {
+    private var sessionIds: [String] {
         if let only = onlySessionId {
             // A card whose session is gone shows nothing (the AiWork
             // watchers drop sessions without moving the surface). Falling
             // through would render every session as a completion card, and
             // their replies size against each other without settling (#357).
-            return appState.sessions[only] != nil ? [("", nil, [only])] : []
+            return appState.sessions[only] != nil ? [only] : []
         }
-
-        let sorted = orderedSessionIds
-
-        switch groupingMode {
-        case "status":
-            // What waits on you heads the list here too (SessionListGrouping);
-            // while the order is held, so is each card's section.
-            let freeze = orderFreeze
-            let sessions = appState.sessions
-            return SessionListGrouping.byStatus(sorted) { id in
-                freeze.status(of: id, live: sessions[id]?.status)
-            }.map { group in
-                ("\(L10n.shared[group.labelKey]) (\(group.ids.count))", nil, group.ids)
-            }
-
-        case "cli":
-            let cliOrder: [(source: String, name: String)] = [
-                ("claude", "Claude"),
-                ("codex", "Codex"),
-                ("gemini", "Gemini"),
-                ("antigravity", "AntiGravity"),
-                ("google-antigravity", "Google Antigravity"),
-                ("cursor", "Cursor"),
-                ("trae", "Trae"),
-                ("traecn", "Trae CN"),
-                ("traecli", "Trae CLI"),
-                ("copilot", "Copilot"),
-                ("qoder", "Qoder"),
-                ("qoderwork", "QoderWork"),
-                ("droid", "Factory"),
-                ("codebuddy", "CodeBuddy"),
-                ("codybuddycn", "CodyBuddyCN"),
-                ("stepfun", "StepFun"),
-                ("workbuddy", "WorkBuddy"),
-                ("hermes", "Hermes"),
-                ("openclaw", "OpenClaw"),
-                ("qwen", "Qwen Code"),
-                ("kimi", "Kimi Code CLI"),
-                ("opencode", "OpenCode"),
-                ("mimo", "MiMo"),
-                ("pi", "Pi"),
-                ("kiro", "Kiro"),
-                ("cline", "Cline"),
-                ("zcode", "ZCode"),
-                ("minimax", "MiniMax Code CLI"),
-                ("aiwork", "AiWork"),
-                ("aiwork-cli", "AiWork CLI"),
-            ]
-            var result: [(String, String?, [String])] = []
-            var seen = Set<String>()
-            for cli in cliOrder {
-                let ids = sorted.filter { id in
-                    guard let source = appState.sessions[id]?.source else { return false }
-                    if source == cli.source { return true }
-                    // Bundle promoted -cli variants with their IDE group (#248).
-                    if cli.source == "cursor", source == "cursor-cli" { return true }
-                    if cli.source == "qoder", source == "qoder-cli" { return true }
-                    return false
-                }
-                ids.forEach { seen.insert($0) }
-                if !ids.isEmpty {
-                    result.append(("\(cli.name) (\(ids.count))", cli.source, ids))
-                }
-            }
-            let remaining = sorted.filter { !seen.contains($0) }
-            if !remaining.isEmpty {
-                result.append(("\(L10n.shared["other"]) (\(remaining.count))", nil, remaining))
-            }
-            return result
-
-        default: // "all"
-            return [("", nil, sorted)]
-        }
+        return orderedSessionIds
     }
 
     var body: some View {
-        // Compute once per render — groupedSessions, totalCount, needsScroll
-        let groups = groupedSessions
-        let totalSessionCount = groups.reduce(0) { $0 + $1.ids.count }
+        // Compute once per render — sessionIds, needsScroll
+        let ids = sessionIds
+        let totalSessionCount = ids.count
         let density = self.density
         let needsScroll = SessionListMetrics.needsScroll(
             isCompletionCard: onlySessionId != nil,
@@ -1339,7 +1082,7 @@ private struct SessionListView: View {
         let compactColumns: (project: CGFloat, status: CGFloat) = density == .compact
             ? (
                 CompactSessionRowMetrics.projectColumnWidth(
-                    names: groups.flatMap(\.ids).compactMap {
+                    names: ids.compactMap {
                         appState.sessions[$0]?.headline(showProjectName: showProjectName).text
                     },
                     fontSize: fontSize,
@@ -1349,36 +1092,17 @@ private struct SessionListView: View {
             )
             : (0, 0)
         let content = VStack(spacing: density == .compact ? CompactSessionRowMetrics.spacing : 6) {
-            ForEach(groups, id: \.header) { group in
-                if !group.header.isEmpty {
-                    HStack(spacing: 6) {
-                        if let src = group.source, let icon = cliIcon(source: src) {
-                            Image(nsImage: icon)
-                                .resizable()
-                                .frame(width: 14, height: 14)
-                        }
-                        Text(group.header)
-                            .font(.system(size: 11, weight: .medium, design: .monospaced))
-                            .foregroundStyle(.white.opacity(0.5))
-                        Spacer()
-                    }
-                    .padding(.horizontal, 12)
-                    .padding(.top, 6)
-                    .padding(.bottom, 2)
-                }
-
-                ForEach(group.ids, id: \.self) { sessionId in
-                    if let session = appState.sessions[sessionId] {
-                        SessionCard(
-                            appState: appState,
-                            sessionId: sessionId,
-                            session: session,
-                            isCompletion: onlySessionId != nil,
-                            density: density,
-                            compactProjectWidth: compactColumns.project,
-                            compactStatusWidth: compactColumns.status
-                        )
-                    }
+            ForEach(ids, id: \.self) { sessionId in
+                if let session = appState.sessions[sessionId] {
+                    SessionCard(
+                        appState: appState,
+                        sessionId: sessionId,
+                        session: session,
+                        isCompletion: onlySessionId != nil,
+                        density: density,
+                        compactProjectWidth: compactColumns.project,
+                        compactStatusWidth: compactColumns.status
+                    )
                 }
             }
 
@@ -1407,10 +1131,7 @@ private struct SessionListView: View {
             thawTask?.cancel()
             thawTask = nil
             if inside {
-                orderFreeze.freeze(
-                    appState.sessionListOrder(),
-                    statuses: appState.sessions.mapValues(\.status)
-                )
+                orderFreeze.freeze(appState.sessionListOrder())
             } else {
                 thawTask = Task { @MainActor in
                     try? await Task.sleep(nanoseconds: SessionOrderFreeze.releaseDelay)
@@ -1435,153 +1156,11 @@ private struct SessionListView: View {
             } else {
                 content
             }
-
-            // Full session list only — the completion card stays focused on
-            // the finished session.
-            if onlySessionId == nil {
-                SessionListFooter(appState: appState, showUsageStats: showUsageStats, showClaudeQuota: showClaudeQuota)
-            }
         }
     }
 }
 
-// MARK: - Plan limits (Anthropic subscription windows)
-
-private enum QuotaStyle {
-    static let normal = Color.white.opacity(0.85)
-    static let warning = Color(red: 1.0, green: 0.7, blue: 0.28)
-    static let critical = Color(red: 1.0, green: 0.4, blue: 0.4)
-    /// A weekly window in surplus — budget worth burning before it resets.
-    static let surplus = Color(red: 0.42, green: 0.85, blue: 0.58)
-
-    static func color(_ level: ClaudeQuotaLimit.Level) -> Color {
-        switch level {
-        case .normal: return normal
-        case .warning: return warning
-        case .critical: return critical
-        }
-    }
-
-    /// Chip colour for the picked window: green for a weekly in surplus,
-    /// otherwise the severity colour.
-    static func color(_ limit: ClaudeQuotaLimit) -> Color {
-        if limit.level == .normal, ClaudeQuotaSelector.isSurplus(limit) { return surplus }
-        return color(limit.level)
-    }
-
-    /// Pace mark colour: amber when spending faster than even pace, green
-    /// when behind it, dim within the neutral band.
-    static func color(_ tone: ClaudeQuotaLimit.Pace.Tone) -> Color {
-        switch tone {
-        case .ahead: return warning
-        case .behind: return surplus
-        case .neutral: return .white.opacity(0.4)
-        }
-    }
-
-    /// "32 pts ahead of pace (≈1h36m) · runs out in 47m at this rate".
-    static func paceSentence(_ pace: ClaudeQuotaLimit.Pace, l10n: L10n) -> String {
-        let points = "\(abs(Int(pace.points.rounded())))"
-        let span = ClaudeQuotaFormat.duration(pace.duration)
-        var parts: [String]
-        switch pace.tone {
-        case .ahead: parts = [String(format: l10n["quota_pace_ahead"], points, span)]
-        case .behind: parts = [String(format: l10n["quota_pace_behind"], points, span)]
-        case .neutral: parts = [l10n["quota_pace_even"]]
-        }
-        if let exhaustsIn = pace.exhaustsIn {
-            parts.append(String(format: l10n["quota_pace_exhausts"], ClaudeQuotaFormat.duration(exhaustsIn)))
-        } else {
-            parts.append(String(format: l10n["quota_pace_projected"], ClaudeQuotaFormat.percent(pace.projectedPercent)))
-        }
-        return parts.joined(separator: " · ")
-    }
-
-    static func label(_ limit: ClaudeQuotaLimit, l10n: L10n) -> String {
-        switch limit.kind {
-        case .session: return "5h"
-        case .weeklyAll: return l10n["quota_week"]
-        case .weeklyScoped: return limit.scopeLabel ?? l10n["quota_week"]
-        }
-    }
-
-    /// One line per window for tooltips: "5h 3% · resets in 1h20m".
-    static func tooltip(_ snapshot: ClaudeQuotaSnapshot, stale: Bool, l10n: L10n, now: Date = Date()) -> String {
-        var lines = snapshot.ordered.map { limit -> String in
-            var line = "\(label(limit, l10n: l10n)) \(ClaudeQuotaFormat.percent(limit.percent))"
-            if let resetsAt = limit.resetsAt, let cd = ClaudeQuotaFormat.countdown(until: resetsAt, now: now) {
-                line += " · ↻ \(cd)"
-            }
-            if let pace = limit.pace(now: now) {
-                line += " · " + paceSentence(pace, l10n: l10n)
-            }
-            return line
-        }
-        if stale { lines.append(l10n["quota_stale"]) }
-        return lines.joined(separator: "\n")
-    }
-}
-
-/// How the collapsed bar makes room for the plan-limit chip.
-///
-/// The bar is centred on the notch, so extra width added to it is split
-/// evenly: the chip, which sits in the left wing, would only get half and
-/// its tail would slide under the notch. On notched screens the bar instead
-/// grows by exactly what the left wing lacks and shifts left by half of it,
-/// so the right wing stays put and the gap between the wings still lands on
-/// the notch. Nothing is spent on the right: menu-bar space on a MacBook is
-/// too scarce to pad for symmetry.
-enum QuotaChipLayout {
-    struct Reserve: Equatable {
-        /// Added to the collapsed bar's width.
-        let extraWidth: CGFloat
-        /// Horizontal offset of the whole bar (negative = left).
-        let shift: CGFloat
-
-        static let none = Reserve(extraWidth: 0, shift: 0)
-    }
-
-    /// Left wing padding before the mascot, and the spacing after it.
-    static let wingLeading: CGFloat = 6
-    static let wingSpacing: CGFloat = 6
-    /// Clearance between the chip's tail and the notch edge.
-    static let notchGap: CGFloat = 4
-
-    /// - Parameters:
-    ///   - wing: base width of each wing (`compactWingWidth`).
-    ///   - statusExtra: the status / tool-status reserves the bar already
-    ///     splits between both wings; half of it is left-wing room.
-    ///   - spareWidth: how much wider the bar can get before it runs past
-    ///     the panel window (window width minus the bar without the chip).
-    static func reserve(
-        chipWidth: CGFloat,
-        mascotSize: CGFloat,
-        wing: CGFloat,
-        statusExtra: CGFloat,
-        hasNotch: Bool,
-        spareWidth: CGFloat = .infinity
-    ) -> Reserve {
-        // No notch to clear: the flexible row just needs the chip's width.
-        // On a wide external display at a large width scale with tool status
-        // on, that can run past the window; capped, the centre tool status
-        // (or the spacer) gives up the difference instead.
-        guard hasNotch else {
-            return Reserve(extraWidth: Swift.min(chipWidth + wingSpacing, Swift.max(0, spareWidth)), shift: 0)
-        }
-        let needed = wingLeading + mascotSize + wingSpacing + chipWidth + notchGap
-        let room = wing + statusExtra / 2
-        let missing = Swift.max(0, needed - room)
-        return Reserve(extraWidth: missing, shift: -missing / 2)
-    }
-}
-
-/// Reports the collapsed chip's laid-out width up to the bar for its reserve.
-struct QuotaChipWidthKey: PreferenceKey {
-    static let defaultValue: CGFloat = 0
-    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
-        value = Swift.max(value, nextValue())
-    }
-}
+// MARK: - Collapsed right wing layout
 
 /// How the collapsed bar makes room for its right wing on a notched screen.
 ///
@@ -1592,13 +1171,16 @@ struct QuotaChipWidthKey: PreferenceKey {
 /// mode nothing else pads it, so a waiting question's badge slid under the
 /// notch and the completion dot beside it vanished behind it. The bar grows by
 /// what the wing lacks and shifts right by half of it, so the left end and the
-/// gap over the notch stay put — the mirror of `QuotaChipLayout`.
+/// gap over the notch stay put.
 enum CompactRightWingLayout {
+    /// Clearance between the wing's edge and the notch edge.
+    static let notchGap: CGFloat = 4
+
     /// - Parameter contentWidth: the right wing's laid-out width, trailing
     ///   padding included; 0 until it has been measured.
     static func missing(contentWidth: CGFloat, wing: CGFloat, statusExtra: CGFloat, hasNotch: Bool) -> CGFloat {
         guard hasNotch, contentWidth > 0 else { return 0 }
-        return Swift.max(0, contentWidth + QuotaChipLayout.notchGap - (wing + statusExtra / 2))
+        return Swift.max(0, contentWidth + notchGap - (wing + statusExtra / 2))
     }
 }
 
@@ -1607,458 +1189,6 @@ struct CompactRightWingWidthKey: PreferenceKey {
     static let defaultValue: CGFloat = 0
     static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
         value = Swift.max(value, nextValue())
-    }
-}
-
-/// Signed pace points hung under a percent like a subscript: drawn as an
-/// overlay so it never moves or widens what it annotates.
-private struct QuotaPaceMark: ViewModifier {
-    let pace: ClaudeQuotaLimit.Pace?
-
-    func body(content: Content) -> some View {
-        content.overlay(alignment: .bottom) {
-            if let pace {
-                Text(ClaudeQuotaFormat.paceDelta(pace.points))
-                    .font(.system(size: 7, weight: .medium, design: .monospaced))
-                    .foregroundStyle(QuotaStyle.color(pace.tone))
-                    .fixedSize()
-                    // Bottom-aligned, then pushed down by about its own line
-                    // height so it hangs just under the percent.
-                    .offset(y: 7.5)
-                    .allowsHitTesting(false)
-            }
-        }
-    }
-}
-
-/// Collapsed-island chip: window label, a 9pt ring, and percent with its
-/// pace mark hung underneath.
-struct QuotaChip: View {
-    let limit: ClaudeQuotaLimit
-    let snapshot: ClaudeQuotaSnapshot
-    let stale: Bool
-    /// Whether the pace mark has room under the percent (see `paceFits`).
-    let showsPace: Bool
-    @ObservedObject private var l10n = L10n.shared
-
-    /// Longest window label the chip shows. A model-scoped window is named by
-    /// the server, and a long display name would push the bar past the panel
-    /// window; the tooltip still shows it in full.
-    static let maxLabelLength = 8
-
-    /// The pace mark hangs under the percent, inside a wing as tall as the
-    /// mascot. Below this mascot size (a menu-bar-height bar, ≈25pt) there is
-    /// no room for it and it would be cut in half; the tooltip still has it.
-    static func paceFits(mascotSize: CGFloat) -> Bool { mascotSize >= 24 }
-
-    static func label(for limit: ClaudeQuotaLimit, l10n: L10n) -> String {
-        let full = QuotaStyle.label(limit, l10n: l10n)
-        guard full.count > maxLabelLength else { return full }
-        return full.prefix(maxLabelLength - 1).trimmingCharacters(in: .whitespaces) + "…"
-    }
-
-    /// First-frame guess at the chip's width before it is measured: ring and
-    /// percent plus the window label (10pt monospaced ≈ 6.2pt per glyph).
-    static func estimatedWidth(for limit: ClaudeQuotaLimit) -> CGFloat {
-        38 + CGFloat(label(for: limit, l10n: L10n.shared).count) * 6.2
-    }
-
-    init(limit: ClaudeQuotaLimit, snapshot: ClaudeQuotaSnapshot, stale: Bool, showsPace: Bool) {
-        self.limit = limit
-        self.snapshot = snapshot
-        self.stale = stale
-        self.showsPace = showsPace
-    }
-
-    /// Shared resolution for the chip's limit so the bar width and the wing
-    /// agree on whether it is shown.
-    static func limit(appState: AppState, enabled: Bool, modeRaw: String) -> ClaudeQuotaLimit? {
-        guard enabled, let mode = ClaudeQuotaChipMode(rawValue: modeRaw), mode != .off,
-              let snapshot = appState.claudeQuota.snapshot else { return nil }
-        return ClaudeQuotaSelector.pick(from: snapshot, mode: mode)
-    }
-
-    var body: some View {
-        TimelineView(.periodic(from: .now, by: 60)) { context in
-            chip(now: context.date)
-        }
-    }
-
-    private func chip(now: Date) -> some View {
-        let color = QuotaStyle.color(limit)
-        return HStack(spacing: 3) {
-            // Which window this is: 5h / week / model name.
-            Text(Self.label(for: limit, l10n: l10n))
-                .font(.system(size: 10, weight: .medium, design: .monospaced))
-                .foregroundStyle(.white.opacity(0.5))
-                .lineLimit(1)
-            ZStack {
-                Circle().stroke(.white.opacity(0.18), lineWidth: 2)
-                Circle()
-                    .trim(from: 0, to: min(limit.percent / 100, 1))
-                    .stroke(color, style: StrokeStyle(lineWidth: 2, lineCap: .round))
-                    .rotationEffect(.degrees(-90))
-            }
-            .frame(width: 9, height: 9)
-            Text(ClaudeQuotaFormat.percent(limit.percent))
-                .font(.system(size: 10, weight: .semibold, design: .monospaced))
-                .foregroundStyle(color)
-                .modifier(QuotaPaceMark(pace: showsPace ? limit.pace(now: now) : nil))
-        }
-        .opacity(stale ? 0.55 : 1)
-        .help(QuotaStyle.tooltip(snapshot, stale: stale, l10n: l10n, now: now))
-    }
-}
-
-// MARK: - Session list footer (plan limits, token usage)
-
-/// Which lines the session list's footer shows.
-struct SessionListFooterContent: Equatable {
-    /// Plan limits on one line, the token totals in its tooltip.
-    var limits = false
-    /// The token totals in words, on a line of their own.
-    var tokens = false
-    /// "Plan limits: could not reach Anthropic" — limits on, nothing fetched.
-    var quotaMessage = false
-
-    /// With plan limits on and fetched, they lead and the tokens fold into
-    /// their line; otherwise (setting off, first fetch pending or failed) the
-    /// token line shows as before, with the fetch error under it.
-    static func resolve(showClaudeQuota: Bool, hasSnapshot: Bool, hasError: Bool, hasUsage: Bool) -> Self {
-        if showClaudeQuota && hasSnapshot { return Self(limits: true) }
-        return Self(tokens: hasUsage, quotaMessage: showClaudeQuota && hasError)
-    }
-}
-
-/// The footer's words: token totals ("last 5h: 422K in · 96K out") and the
-/// plan-limit tooltip ("5h 64% · resets in 2h20m · …").
-enum UsageFooterText {
-    /// A model-scoped window is named by the server; past this many
-    /// characters the line shows it cut, the tooltip in full.
-    static let maxWindowLabelLength = 10
-
-    /// Token usage worth a footer: the setting is on and there is some.
-    static func shownUsage(_ usage: ClaudeUsageScanner.Snapshot?, enabled: Bool) -> ClaudeUsageScanner.Snapshot? {
-        guard enabled, let usage, !(usage.last5h.isEmpty && usage.today.isEmpty) else { return nil }
-        return usage
-    }
-
-    /// "422K in · 96K out". In is billed input: new input plus cache writes.
-    static func inOut(_ totals: ClaudeUsageTotals, l10n: L10n) -> String {
-        String(
-            format: l10n["usage_in_out"],
-            ClaudeUsageScanner.formatTokens(totals.inputTokens + totals.cacheCreationTokens),
-            ClaudeUsageScanner.formatTokens(totals.outputTokens)
-        )
-    }
-
-    /// "last 5h: 422K in · 96K out"
-    static func last5h(_ usage: ClaudeUsageScanner.Snapshot, l10n: L10n) -> String {
-        String(format: l10n["usage_span"], l10n["usage_last_5h"], inOut(usage.last5h, l10n: l10n))
-    }
-
-    /// "Today: 922K in · 233K out"
-    static func today(_ usage: ClaudeUsageScanner.Snapshot, l10n: L10n) -> String {
-        String(format: l10n["usage_span"], l10n["usage_today"], inOut(usage.today, l10n: l10n))
-    }
-
-    /// Capitalises a span that starts a line ("last 5h" → "Last 5h").
-    static func leading(_ text: String) -> String {
-        text.prefix(1).uppercased() + text.dropFirst()
-    }
-
-    /// Token totals for a tooltip: where they come from, then each window
-    /// with what its "in" is made of.
-    static func usageTooltip(_ usage: ClaudeUsageScanner.Snapshot, l10n: L10n) -> String {
-        func breakdown(_ t: ClaudeUsageTotals) -> String {
-            "  " + String(
-                format: l10n["usage_tooltip_breakdown"],
-                ClaudeUsageScanner.formatTokens(t.inputTokens),
-                ClaudeUsageScanner.formatTokens(t.cacheCreationTokens),
-                ClaudeUsageScanner.formatTokens(t.cacheReadTokens)
-            )
-        }
-        return [
-            l10n["usage_tooltip_title"],
-            leading(last5h(usage, l10n: l10n)), breakdown(usage.last5h),
-            today(usage, l10n: l10n), breakdown(usage.today),
-        ].joined(separator: "\n")
-    }
-
-    /// The footer's name for a window: "5h", "Week", or the model's name, cut
-    /// to `maxWindowLabelLength`.
-    static func windowLabel(_ limit: ClaudeQuotaLimit, l10n: L10n) -> String {
-        let full = QuotaStyle.label(limit, l10n: l10n)
-        guard full.count > maxWindowLabelLength else { return full }
-        return full.prefix(maxWindowLabelLength - 1).trimmingCharacters(in: .whitespaces) + "…"
-    }
-
-    /// Colour level in the footer: the server's severity, raised to a warning
-    /// near the cap (the alert threshold the chip's Auto mode uses) in case
-    /// the server still calls it normal there.
-    static func level(_ limit: ClaudeQuotaLimit) -> ClaudeQuotaLimit.Level {
-        if limit.level == .normal, limit.percent >= ClaudeQuotaSelector.alertPercent { return .warning }
-        return limit.level
-    }
-
-    /// "5h 64% · resets in 2h20m · 11 pts ahead of even pace (≈33m) · runs
-    /// out in 1h40m at this rate".
-    static func limitLine(_ limit: ClaudeQuotaLimit, l10n: L10n, now: Date) -> String {
-        var parts = ["\(QuotaStyle.label(limit, l10n: l10n)) \(ClaudeQuotaFormat.percent(limit.percent))"]
-        if let resetsAt = limit.resetsAt, let countdown = ClaudeQuotaFormat.countdown(until: resetsAt, now: now) {
-            parts.append(String(format: l10n["quota_resets_in"], countdown))
-        }
-        if let pace = limit.pace(now: now) {
-            parts.append(QuotaStyle.paceSentence(pace, l10n: l10n))
-        }
-        return parts.joined(separator: " · ")
-    }
-
-    /// The limit line's tooltip: every window with its reset and pace, a
-    /// stale note, then the token totals the line no longer shows.
-    static func limitsTooltip(
-        _ snapshot: ClaudeQuotaSnapshot,
-        stale: Bool,
-        usage: ClaudeUsageScanner.Snapshot?,
-        l10n: L10n,
-        now: Date
-    ) -> String {
-        var lines = snapshot.ordered.map { limitLine($0, l10n: l10n, now: now) }
-        if stale { lines.append(l10n["quota_stale"]) }
-        if let usage { lines += ["", usageTooltip(usage, l10n: l10n)] }
-        return lines.joined(separator: "\n")
-    }
-}
-
-/// The session list's footer (SessionListFooterContent): plan limits first
-/// when they're on, otherwise the token totals in words.
-private struct SessionListFooter: View {
-    var appState: AppState
-    let showUsageStats: Bool
-    let showClaudeQuota: Bool
-
-    var body: some View {
-        let usage = UsageFooterText.shownUsage(appState.claudeUsage, enabled: showUsageStats)
-        let snapshot = appState.claudeQuota.snapshot
-        let error = appState.claudeQuota.lastError
-        let content = SessionListFooterContent.resolve(
-            showClaudeQuota: showClaudeQuota,
-            hasSnapshot: snapshot != nil,
-            hasError: error != nil,
-            hasUsage: usage != nil
-        )
-        if content.limits, let snapshot {
-            QuotaFooterLine(snapshot: snapshot, error: error, usage: usage)
-        }
-        if content.tokens, let usage {
-            UsageFooterLine(usage: usage)
-        }
-        if content.quotaMessage, let error {
-            QuotaFooterMessage(error: error)
-        }
-    }
-}
-
-/// Plan limits on one line, what can stop you first: each window's bar,
-/// percent (warning colours near the cap) and reset countdown, then the
-/// token sparkline. Token totals and pace numbers are in the tooltip.
-private struct QuotaFooterLine: View {
-    let snapshot: ClaudeQuotaSnapshot
-    let error: ClaudeQuotaClientError?
-    let usage: ClaudeUsageScanner.Snapshot?
-    @ObservedObject private var l10n = L10n.shared
-
-    static let barWidth: CGFloat = 46
-
-    var body: some View {
-        // Countdowns tick once a minute; the panel is only open briefly.
-        TimelineView(.periodic(from: .now, by: 60)) { context in
-            let now = context.date
-            let tooltip = UsageFooterText.limitsTooltip(
-                snapshot, stale: error != nil, usage: usage, l10n: l10n, now: now
-            )
-            HStack(spacing: 8) {
-                // Too narrow for every window with its countdown (long
-                // model name, large text): the countdowns go first, to the
-                // tooltip.
-                ViewThatFits(in: .horizontal) {
-                    windows(now: now, countdowns: true)
-                    windows(now: now, countdowns: false)
-                }
-                Spacer(minLength: 0)
-                if error != nil {
-                    Image(systemName: "exclamationmark.triangle.fill")
-                        .font(.system(size: 9))
-                        .foregroundStyle(QuotaStyle.warning)
-                        .help(l10n["quota_stale"])
-                }
-                if let usage {
-                    UsageSparkline(buckets: usage.hourlyOutputTokens)
-                }
-            }
-            .font(.system(size: 10, weight: .medium, design: .monospaced))
-            .padding(.horizontal, 14)
-            .padding(.top, 7)
-            .padding(.bottom, 9)
-            .contentShape(Rectangle())
-            .help(tooltip)
-            // The tooltip is the whole story, tokens included.
-            .accessibilityElement(children: .ignore)
-            .accessibilityLabel(tooltip)
-        }
-    }
-
-    private func windows(now: Date, countdowns: Bool) -> some View {
-        HStack(spacing: 12) {
-            ForEach(Array(snapshot.ordered.enumerated()), id: \.offset) { _, limit in
-                segment(limit, now: now, countdown: countdowns)
-            }
-        }
-        .lineLimit(1)
-    }
-
-    private func segment(_ limit: ClaudeQuotaLimit, now: Date, countdown: Bool) -> some View {
-        let color = QuotaStyle.color(UsageFooterText.level(limit))
-        return HStack(spacing: 5) {
-            Text(UsageFooterText.windowLabel(limit, l10n: l10n))
-                .foregroundStyle(.white.opacity(0.6))
-            ZStack(alignment: .leading) {
-                Capsule().fill(.white.opacity(0.14))
-                Capsule().fill(color)
-                    .frame(width: Self.barWidth * min(limit.percent / 100, 1))
-                // Even-pace tick: where usage would be if spread evenly.
-                if let elapsed = limit.elapsedFraction(now: now) {
-                    Rectangle()
-                        .fill(.white.opacity(0.6))
-                        .frame(width: 1, height: 8)
-                        .offset(x: Self.barWidth * elapsed - 0.5)
-                }
-            }
-            .frame(width: Self.barWidth, height: 5)
-            Text(ClaudeQuotaFormat.percent(limit.percent))
-                .fontWeight(.semibold)
-                .foregroundStyle(color)
-            if countdown, let resetsAt = limit.resetsAt,
-               let left = ClaudeQuotaFormat.countdown(until: resetsAt, now: now) {
-                Text(left)
-                    .font(.system(size: 9.5, weight: .regular, design: .monospaced))
-                    .foregroundStyle(.white.opacity(0.5))
-            }
-        }
-        .fixedSize()
-    }
-}
-
-/// Footer fallback when there is no snapshot yet but the fetch failed.
-private struct QuotaFooterMessage: View {
-    let error: ClaudeQuotaClientError
-    @ObservedObject private var l10n = L10n.shared
-
-    private var text: String {
-        switch error {
-        case .unauthorized, .noCredential: return l10n["quota_login_needed"]
-        default: return l10n["quota_unreachable"]
-        }
-    }
-
-    var body: some View {
-        HStack(spacing: 5) {
-            Image(systemName: "clock.arrow.circlepath")
-                .font(.system(size: 9, weight: .semibold))
-            Text(text)
-                .lineLimit(1)
-                .truncationMode(.tail)
-            Spacer(minLength: 0)
-        }
-        .font(.system(size: 10, weight: .medium, design: .monospaced))
-        .foregroundStyle(.white.opacity(0.55))
-        .padding(.horizontal, 14)
-        .padding(.top, 5)
-        .padding(.bottom, 8)
-        .help(text)
-    }
-}
-
-/// Token totals from the local Claude transcripts, in words: "Claude · last
-/// 5h: 422K in · 96K out   Today: 922K in · 233K out". "In" is billed input
-/// (new input + cache writes); the tooltip breaks it down.
-private struct UsageFooterLine: View {
-    let usage: ClaudeUsageScanner.Snapshot
-    @ObservedObject private var l10n = L10n.shared
-
-    var body: some View {
-        let last5h = UsageFooterText.last5h(usage, l10n: l10n)
-        let today = UsageFooterText.today(usage, l10n: l10n)
-        let tooltip = UsageFooterText.usageTooltip(usage, l10n: l10n)
-        HStack(alignment: .firstTextBaseline, spacing: 5) {
-            Image(systemName: "gauge.with.needle")
-                .font(.system(size: 9, weight: .semibold))
-            // A long translation ("Eingabe" / "Ausgabe") sheds the "Claude ·"
-            // lead, then takes a second line rather than cut a number off.
-            ViewThatFits(in: .horizontal) {
-                HStack(spacing: 14) {
-                    span5h(last5h, brand: true)
-                    Text(today)
-                }
-                .fixedSize()
-                HStack(spacing: 14) {
-                    span5h(last5h, brand: false)
-                    Text(today)
-                }
-                .fixedSize()
-                VStack(alignment: .leading, spacing: 3) {
-                    span5h(last5h, brand: true)
-                    Text(today)
-                }
-            }
-            .lineLimit(1)
-            .truncationMode(.tail)
-            Spacer(minLength: 8)
-            UsageSparkline(buckets: usage.hourlyOutputTokens)
-                .alignmentGuide(.firstTextBaseline) { $0[.bottom] - 1 }
-        }
-        .font(.system(size: 10, weight: .medium, design: .monospaced))
-        .foregroundStyle(.white.opacity(0.6))
-        .padding(.horizontal, 14)
-        .padding(.top, 5)
-        .padding(.bottom, 8)
-        .contentShape(Rectangle())
-        .help(tooltip)
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel(tooltip)
-    }
-
-    /// "Claude · last 5h: 422K in · 96K out", or without the lead
-    /// ("Last 5h: …").
-    private func span5h(_ last5h: String, brand: Bool) -> some View {
-        HStack(spacing: 5) {
-            if brand {
-                Text("Claude").fontWeight(.semibold)
-                Text("·").foregroundStyle(.white.opacity(0.5))
-                Text(last5h)
-            } else {
-                Text(UsageFooterText.leading(last5h))
-            }
-        }
-    }
-}
-
-/// Trailing-hours output-token activity, one 2.5pt bar per hour (right = now).
-private struct UsageSparkline: View {
-    let buckets: [Int]
-
-    var body: some View {
-        let peak = max(buckets.max() ?? 0, 1)
-        HStack(alignment: .bottom, spacing: 1.5) {
-            ForEach(Array(buckets.enumerated()), id: \.offset) { _, value in
-                RoundedRectangle(cornerRadius: 0.75)
-                    .fill(.white.opacity(value == 0 ? 0.12 : 0.45))
-                    .frame(width: 2.5, height: max(1.5, CGFloat(value) / CGFloat(peak) * 10))
-            }
-        }
-        .frame(height: 10, alignment: .bottom)
-        // Decorative: the tooltip and the line's label carry the numbers.
-        .accessibilityHidden(true)
     }
 }
 
@@ -3192,12 +2322,15 @@ private struct TerminalBadge: View {
                 )
             } else {
                 HStack(spacing: 3) {
+                    // Icon only; the name is in the tooltip. Spelled out only
+                    // when there is no icon to show.
                     if let icon = termIcon {
                         Image(nsImage: icon)
                             .resizable()
                             .frame(width: 13, height: 13)
-                    }
-                    if let term = badgeLabel {
+                            .help(badgeLabel ?? "")
+                            .accessibilityLabel(badgeLabel ?? "")
+                    } else if let term = badgeLabel {
                         Text(term)
                             .font(.system(size: 9.5, weight: .medium, design: .monospaced))
                             .foregroundStyle(.white.opacity(0.5))
@@ -3209,90 +2342,6 @@ private struct TerminalBadge: View {
                 }
             }
         }
-    }
-}
-
-/// Collapsed single-line row for idle sessions >15 min
-// MARK: - Pixel Text (5×7 dot matrix style)
-
-struct PixelText: View {
-    let text: String
-    let color: Color
-    var pixelSize: CGFloat = 2
-
-    private static let W = 5  // glyph width
-    private static let H = 7  // glyph height
-    /// Rows any glyph draws in: the bottom two are always blank, and framing
-    /// them too set the letters high in a centred strip.
-    private static let inkRows = 5
-
-    // 5×7 bitmaps — each row is 5 bits, 7 rows per glyph
-    static let glyphs: [Character: [UInt8]] = [
-        "0": [0,1,1,1,0, 1,0,0,1,1, 1,0,1,0,1, 1,1,0,0,1, 0,1,1,1,0, 0,0,0,0,0, 0,0,0,0,0],
-        "1": [0,0,1,0,0, 0,1,1,0,0, 0,0,1,0,0, 0,0,1,0,0, 0,1,1,1,0, 0,0,0,0,0, 0,0,0,0,0],
-        "2": [0,1,1,1,0, 1,0,0,0,1, 0,0,1,1,0, 0,1,0,0,0, 1,1,1,1,1, 0,0,0,0,0, 0,0,0,0,0],
-        "3": [0,1,1,1,0, 1,0,0,0,1, 0,0,1,1,0, 1,0,0,0,1, 0,1,1,1,0, 0,0,0,0,0, 0,0,0,0,0],
-        "4": [0,0,0,1,0, 0,0,1,1,0, 0,1,0,1,0, 1,1,1,1,1, 0,0,0,1,0, 0,0,0,0,0, 0,0,0,0,0],
-        "5": [1,1,1,1,1, 1,0,0,0,0, 1,1,1,1,0, 0,0,0,0,1, 1,1,1,1,0, 0,0,0,0,0, 0,0,0,0,0],
-        "6": [0,1,1,1,0, 1,0,0,0,0, 1,1,1,1,0, 1,0,0,0,1, 0,1,1,1,0, 0,0,0,0,0, 0,0,0,0,0],
-        "7": [1,1,1,1,1, 0,0,0,0,1, 0,0,0,1,0, 0,0,1,0,0, 0,0,1,0,0, 0,0,0,0,0, 0,0,0,0,0],
-        "8": [0,1,1,1,0, 1,0,0,0,1, 0,1,1,1,0, 1,0,0,0,1, 0,1,1,1,0, 0,0,0,0,0, 0,0,0,0,0],
-        "9": [0,1,1,1,0, 1,0,0,0,1, 0,1,1,1,1, 0,0,0,0,1, 0,1,1,1,0, 0,0,0,0,0, 0,0,0,0,0],
-        "A": [0,0,1,0,0, 0,1,0,1,0, 1,0,0,0,1, 1,1,1,1,1, 1,0,0,0,1, 0,0,0,0,0, 0,0,0,0,0],
-        "B": [1,1,1,1,0, 1,0,0,0,1, 1,1,1,1,0, 1,0,0,0,1, 1,1,1,1,0, 0,0,0,0,0, 0,0,0,0,0],
-        "C": [0,1,1,1,0, 1,0,0,0,1, 1,0,0,0,0, 1,0,0,0,1, 0,1,1,1,0, 0,0,0,0,0, 0,0,0,0,0],
-        "D": [1,1,1,1,0, 1,0,0,0,1, 1,0,0,0,1, 1,0,0,0,1, 1,1,1,1,0, 0,0,0,0,0, 0,0,0,0,0],
-        "E": [1,1,1,1,1, 1,0,0,0,0, 1,1,1,1,0, 1,0,0,0,0, 1,1,1,1,1, 0,0,0,0,0, 0,0,0,0,0],
-        "F": [1,1,1,1,1, 1,0,0,0,0, 1,1,1,1,0, 1,0,0,0,0, 1,0,0,0,0, 0,0,0,0,0, 0,0,0,0,0],
-        "G": [0,1,1,1,0, 1,0,0,0,0, 1,0,0,1,1, 1,0,0,0,1, 0,1,1,1,0, 0,0,0,0,0, 0,0,0,0,0],
-        "H": [1,0,0,0,1, 1,0,0,0,1, 1,1,1,1,1, 1,0,0,0,1, 1,0,0,0,1, 0,0,0,0,0, 0,0,0,0,0],
-        "I": [0,1,1,1,0, 0,0,1,0,0, 0,0,1,0,0, 0,0,1,0,0, 0,1,1,1,0, 0,0,0,0,0, 0,0,0,0,0],
-        "K": [1,0,0,1,0, 1,0,1,0,0, 1,1,0,0,0, 1,0,1,0,0, 1,0,0,1,0, 0,0,0,0,0, 0,0,0,0,0],
-        "L": [1,0,0,0,0, 1,0,0,0,0, 1,0,0,0,0, 1,0,0,0,0, 1,1,1,1,1, 0,0,0,0,0, 0,0,0,0,0],
-        "N": [1,0,0,0,1, 1,1,0,0,1, 1,0,1,0,1, 1,0,0,1,1, 1,0,0,0,1, 0,0,0,0,0, 0,0,0,0,0],
-        "O": [0,1,1,1,0, 1,0,0,0,1, 1,0,0,0,1, 1,0,0,0,1, 0,1,1,1,0, 0,0,0,0,0, 0,0,0,0,0],
-        "P": [1,1,1,1,0, 1,0,0,0,1, 1,1,1,1,0, 1,0,0,0,0, 1,0,0,0,0, 0,0,0,0,0, 0,0,0,0,0],
-        "R": [1,1,1,1,0, 1,0,0,0,1, 1,1,1,1,0, 1,0,0,1,0, 1,0,0,0,1, 0,0,0,0,0, 0,0,0,0,0],
-        "S": [0,1,1,1,1, 1,0,0,0,0, 0,1,1,1,0, 0,0,0,0,1, 1,1,1,1,0, 0,0,0,0,0, 0,0,0,0,0],
-        "T": [1,1,1,1,1, 0,0,1,0,0, 0,0,1,0,0, 0,0,1,0,0, 0,0,1,0,0, 0,0,0,0,0, 0,0,0,0,0],
-        "U": [1,0,0,0,1, 1,0,0,0,1, 1,0,0,0,1, 1,0,0,0,1, 0,1,1,1,0, 0,0,0,0,0, 0,0,0,0,0],
-        "W": [1,0,0,0,1, 1,0,0,0,1, 1,0,1,0,1, 1,0,1,0,1, 0,1,0,1,0, 0,0,0,0,0, 0,0,0,0,0],
-        "X": [1,0,0,0,1, 0,1,0,1,0, 0,0,1,0,0, 0,1,0,1,0, 1,0,0,0,1, 0,0,0,0,0, 0,0,0,0,0],
-        "/": [0,0,0,0,1, 0,0,0,1,0, 0,0,1,0,0, 0,1,0,0,0, 1,0,0,0,0, 0,0,0,0,0, 0,0,0,0,0],
-        "-": [0,0,0,0,0, 0,0,0,0,0, 1,1,1,1,1, 0,0,0,0,0, 0,0,0,0,0, 0,0,0,0,0, 0,0,0,0,0],
-        " ": [0,0,0,0,0, 0,0,0,0,0, 0,0,0,0,0, 0,0,0,0,0, 0,0,0,0,0, 0,0,0,0,0, 0,0,0,0,0],
-    ]
-
-    var body: some View {
-        let chars = Array(text.uppercased())
-        let px = pixelSize
-        let gap: CGFloat = px
-
-        Canvas { ctx, size in
-            var xOff: CGFloat = 0
-            for ch in chars {
-                guard let glyph = Self.glyphs[ch] else {
-                    xOff += 3 * px
-                    continue
-                }
-                for row in 0..<Self.H {
-                    for col in 0..<Self.W {
-                        if glyph[row * Self.W + col] == 1 {
-                            let rect = CGRect(x: xOff + CGFloat(col) * px, y: CGFloat(row) * px, width: px, height: px)
-                            ctx.fill(Path(rect), with: .color(color))
-                        }
-                    }
-                }
-                xOff += CGFloat(Self.W) * px + gap
-            }
-        }
-        .frame(width: charWidth(chars.count), height: CGFloat(Self.inkRows) * pixelSize)
-    }
-
-    private func charWidth(_ count: Int) -> CGFloat {
-        guard count > 0 else { return 0 }
-        let px = pixelSize
-        return CGFloat(count) * (CGFloat(Self.W) * px + px) - px
     }
 }
 

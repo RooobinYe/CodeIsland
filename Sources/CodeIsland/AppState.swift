@@ -241,33 +241,11 @@ final class AppState {
                 glanceDismissTask?.cancel()
                 glanceCompletionActive = false
             }
-            if surface.isExpanded {
-                refreshClaudeUsageIfStale()
-                claudeQuota.noteExpanded()
-            } else {
-                claudeQuota.noteCollapsed()
-            }
             if surface != oldValue {
                 followUps.surfaceChanged(surface)
             }
         }
     }
-
-    /// Local-transcript token usage shown in the session-list footer.
-    /// Refreshed lazily on panel expansion (no resident timer, no API calls).
-    var claudeUsage: ClaudeUsageScanner.Snapshot?
-    /// Subscription rate limits (5h / weekly) from Anthropic — opt-in, network.
-    let claudeQuota = ClaudeQuotaMonitor()
-    /// Process-wide, not per-instance: the scan reads one shared history
-    /// (`~/.claude`), so two concurrent runs are always duplicate work. Production
-    /// has a single AppState and never noticed, but anything constructing several —
-    /// the test bundle does — otherwise starts N cold scans at once on the shared
-    /// `.utility` cooperative pool and starves every other detached probe on it
-    /// (git-branch resolution among them).
-    private static var usageScanInFlight = false
-    /// Incremental parse state — round-trips through each detached scan so
-    /// growing transcripts are only read past their last consumed offset.
-    private var usageFileCache = ClaudeUsageScanner.FileCache()
 
     /// Glance completion mode: an agent finished while the pill was collapsed —
     /// light the dot instead of expanding. Cleared when the user expands the
@@ -1150,28 +1128,6 @@ final class AppState {
         }
     }
 
-    /// Prewarm at launch so the footer doesn't pop in (and shift panel height)
-    /// on the first expansion.
-    func refreshClaudeUsageIfStale() {
-        guard UserDefaults.standard.bool(forKey: SettingsKey.showUsageStats) else { return }
-        guard !Self.usageScanInFlight else { return }
-        if let scannedAt = claudeUsage?.scannedAt, Date().timeIntervalSince(scannedAt) < 120 { return }
-        Self.usageScanInFlight = true
-        let cacheCopy = usageFileCache
-        Task.detached(priority: .utility) {
-            var cache = cacheCopy
-            let snapshot = ClaudeUsageScanner.scan(claudeHomes: ClaudeConfigPaths.allConfigDirs(), cache: &cache)
-            // Bound to a `let` before the hop: capturing the `var` in the
-            // concurrently-executing closure is an error under Swift 6.
-            let scannedCache = cache
-            await MainActor.run { [weak self] in
-                self?.claudeUsage = snapshot
-                self?.usageFileCache = scannedCache
-                AppState.usageScanInFlight = false
-            }
-        }
-    }
-
     /// Last unresolved-branch probe per session — keeps `gitBranch == nil`
     /// (non-repo cwds, SessionStart snapshot rebuilds) from probing on every event.
     private var gitBranchCheckedAt: [String: Date] = [:]
@@ -1483,13 +1439,6 @@ final class AppState {
         // so a remote session can never probe the local filesystem here.
         maybeRefreshGitBranch(for: sessionId, cwdBefore: cwdBeforeReduce, normalizedEventName: normalizedEventName)
         maybeResolveHostHarness(for: sessionId)
-
-        // A finished local Claude turn is booked against the plan limits now —
-        // the quota monitor coalesces these into at most one fetch a minute.
-        if normalizedEventName == "Stop",
-           let s = sessions[sessionId], s.isClaude, s.isRemote != true {
-            claudeQuota.noteStop()
-        }
 
         // Backfill model after metadata extraction. Hooks are inconsistent across providers,
         // so retry with a cooldown instead of giving up permanently on the first miss.

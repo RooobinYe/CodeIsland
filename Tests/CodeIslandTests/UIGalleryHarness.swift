@@ -20,8 +20,7 @@ import CodeIslandCore
 ///
 /// Settings the panel reads are cleared for the run (shipped defaults) and
 /// restored after; variants (16pt content font, grouping modes, …) set
-/// theirs inside that sandbox. The plan-limit setting is only ever written to
-/// a private suite so the quota monitor never fetches.
+/// theirs inside that sandbox.
 @MainActor
 final class UIGalleryHarness: XCTestCase {
 
@@ -68,13 +67,12 @@ final class UIGalleryHarness: XCTestCase {
             for state in all { jobs.append((state, .macBook14, .dark)) }
             for state in all { jobs.append((state, .macBook16, .dark)) }
             for state in all { jobs.append((state, .external, .dark)) }
-            for state in [CollapsedState.idle, .workingShort, .approval, .quota] { jobs.append((state, .macBook14, .light)) }
+            for state in [CollapsedState.idle, .workingShort, .approval] { jobs.append((state, .macBook14, .light)) }
         } else {
-            for state in [CollapsedState.workingShort, .workingLong, .quota] { jobs.append((state, .macBook14, .dark)) }
+            for state in [CollapsedState.workingShort, .workingLong] { jobs.append((state, .macBook14, .dark)) }
         }
         for (state, screen, wallpaper) in jobs {
             GallerySettings.reset()
-            if state == .quota { GallerySettings.set(true, SettingsKey.showClaudeQuota, suiteOnly: true) }
             let demo = try await GalleryDemo.collapsed(state, lang: lang)
             defer { demo.release() }
             let name = "\(screen.name)-\(state.rawValue)" + (wallpaper == .light ? "-light" : "")
@@ -85,40 +83,33 @@ final class UIGalleryHarness: XCTestCase {
     }
 
     private func renderList(_ lang: GalleryLang) async throws {
-        struct Job { let name: String; let count: Int; let settings: [(String, Any)]; let quota: Bool
+        struct Job { let name: String; let count: Int; let settings: [(String, Any)]
                      var wallpaper: StageWallpaper = .dark; var appearance: NSAppearance.Name = .darkAqua }
         var jobs = [
-            Job(name: "1", count: 1, settings: [], quota: false),
-            Job(name: "4", count: 4, settings: [], quota: false),
-            Job(name: "8", count: 8, settings: [], quota: false),
-            Job(name: "4-f16", count: 4, settings: [(SettingsKey.contentFontSize, 16)], quota: false),
-            Job(name: "8-quota", count: 8, settings: [], quota: true),
-            Job(name: "8-status", count: 8, settings: [(SettingsKey.sessionGroupingMode, "status")], quota: false),
-            Job(name: "8-cli", count: 8, settings: [(SettingsKey.sessionGroupingMode, "cli")], quota: false),
-            Job(name: "4-compact", count: 4, settings: [(SettingsKey.sessionListDensity, "compact")], quota: false),
-            Job(name: "8-compact", count: 8, settings: [(SettingsKey.sessionListDensity, "compact")], quota: false),
+            Job(name: "1", count: 1, settings: []),
+            Job(name: "4", count: 4, settings: []),
+            Job(name: "8", count: 8, settings: []),
+            Job(name: "4-f16", count: 4, settings: [(SettingsKey.contentFontSize, 16)]),
+            Job(name: "4-compact", count: 4, settings: [(SettingsKey.sessionListDensity, "compact")]),
+            Job(name: "8-compact", count: 8, settings: [(SettingsKey.sessionListDensity, "compact")]),
         ]
         if lang == .en {
             jobs += [
                 Job(name: "8-details", count: 8, settings: [
                     (SettingsKey.showModelLabel, true), (SettingsKey.showAgentDetails, true), (SettingsKey.aiMessageLines, 2),
-                ], quota: false),
-                Job(name: "8-max8", count: 8, settings: [(SettingsKey.maxVisibleSessions, 8)], quota: false),
+                ]),
+                Job(name: "8-max8", count: 8, settings: [(SettingsKey.maxVisibleSessions, 8)]),
                 Job(name: "8-compact-f16", count: 8, settings: [
                     (SettingsKey.sessionListDensity, "compact"), (SettingsKey.contentFontSize, 16),
-                ], quota: false),
-                Job(name: "8-compact-status", count: 8, settings: [
-                    (SettingsKey.sessionListDensity, "compact"), (SettingsKey.sessionGroupingMode, "status"),
-                ], quota: true),
-                Job(name: "4-light", count: 4, settings: [], quota: false, wallpaper: .light),
-                Job(name: "4-lightmode", count: 4, settings: [], quota: false, appearance: .aqua),
+                ]),
+                Job(name: "4-light", count: 4, settings: [], wallpaper: .light),
+                Job(name: "4-lightmode", count: 4, settings: [], appearance: .aqua),
             ]
         }
         for job in jobs {
             GallerySettings.reset()
             for (key, value) in job.settings { GallerySettings.set(value, key) }
-            if job.quota { GallerySettings.set(true, SettingsKey.showClaudeQuota, suiteOnly: true) }
-            let demo = try await GalleryDemo.list(count: job.count, lang: lang, quota: job.quota)
+            let demo = try await GalleryDemo.list(count: job.count, lang: lang)
             defer { demo.release() }
             try renderOnStage(demo, group: "list", name: job.name, lang: lang, screen: .macBook14,
                               layout: StageLayout(width: 700, bottomMargin: 40, menuItems: false),
@@ -242,11 +233,9 @@ enum GallerySettings {
         }
     }
 
-    /// `suiteOnly` keeps a key out of the standard defaults — the quota
-    /// monitor watches those and would start fetching.
-    static func set(_ value: Any, _ key: String, suiteOnly: Bool = false) {
+    static func set(_ value: Any, _ key: String) {
         suite.set(value, forKey: key)
-        if !suiteOnly { UserDefaults.standard.set(value, forKey: key) }
+        UserDefaults.standard.set(value, forKey: key)
     }
 
 }
@@ -280,7 +269,6 @@ enum CollapsedState: String, CaseIterable {
     case workingLong = "working-long"
     case approval
     case question
-    case quota
     case glance
 }
 
@@ -336,37 +324,6 @@ enum GalleryDemo {
             s.lastAssistantMessage = reply
             s.addRecentMessage(ChatMessage(isUser: false, text: reply))
         }
-    }
-
-    private static func usage() -> ClaudeUsageScanner.Snapshot {
-        var fiveHours = ClaudeUsageTotals()
-        fiveHours.inputTokens = 148_000
-        fiveHours.cacheCreationTokens = 274_000
-        fiveHours.outputTokens = 96_400
-        fiveHours.cacheReadTokens = 11_800_000
-        fiveHours.messageCount = 131
-        var today = ClaudeUsageTotals()
-        today.inputTokens = 392_000
-        today.cacheCreationTokens = 530_000
-        today.outputTokens = 233_000
-        today.cacheReadTokens = 29_600_000
-        today.messageCount = 388
-        return ClaudeUsageScanner.Snapshot(
-            last5h: fiveHours,
-            today: today,
-            hourlyOutputTokens: [0, 3_100, 14_800, 9_200, 0, 0, 18_400, 36_500, 22_900, 12_300, 41_800, 27_600],
-            scannedAt: Date()
-        )
-    }
-
-    private static func applyQuota(_ state: AppState) {
-        let now = Date()
-        state.claudeQuota.applyPreview(ClaudeQuotaSnapshot(limits: [
-            ClaudeQuotaLimit(kind: .session, percent: 64, resetsAt: now.addingTimeInterval(2 * 3600 + 1200)),
-            ClaudeQuotaLimit(kind: .weeklyAll, percent: 38, resetsAt: now.addingTimeInterval(3 * 86_400)),
-            ClaudeQuotaLimit(kind: .weeklyScoped, percent: 81, severity: "warning",
-                             resetsAt: now.addingTimeInterval(3 * 86_400), scopeLabel: "Opus"),
-        ], fetchedAt: now))
     }
 
     // MARK: Sessions
@@ -484,14 +441,13 @@ enum GalleryDemo {
 
     static func collapsed(_ kind: CollapsedState, lang: GalleryLang) async throws -> GalleryDemoState {
         let state = AppState()
-        state.claudeUsage = usage()
         if kind == .empty { return GalleryDemoState(state: state) }
 
         var claude = claudeWorking(lang)
         var after: (() -> Void)?
         switch kind {
         case .empty: break
-        case .idle, .quota, .glance:
+        case .idle, .glance:
             claude.status = .idle
             claude.currentTool = nil
             claude.toolDescription = nil
@@ -515,12 +471,8 @@ enum GalleryDemo {
         state.activeSessionId = ID.claude
         state.refreshDerivedState()
 
-        switch kind {
-        case .quota:
-            applyQuota(state)
-        case .glance:
+        if kind == .glance {
             state.glanceCompletionActive = true
-        default: break
         }
         state.refreshDerivedState()
         return GalleryDemoState(state: state, afterFirstLayout: after)
@@ -528,9 +480,8 @@ enum GalleryDemo {
 
     // MARK: Session list
 
-    static func list(count: Int, lang: GalleryLang, quota: Bool) async throws -> GalleryDemoState {
+    static func list(count: Int, lang: GalleryLang) async throws -> GalleryDemoState {
         let state = AppState()
-        state.claudeUsage = usage()
         var sessions: [String: SessionSnapshot] = [:]
         switch count {
         case 1:
@@ -545,7 +496,6 @@ enum GalleryDemo {
         }
         state.sessions = sessions
         state.activeSessionId = ID.claude
-        if quota { applyQuota(state) }
         state.refreshDerivedState()
         state.surface = .sessionList
         return GalleryDemoState(state: state)
@@ -555,7 +505,6 @@ enum GalleryDemo {
 
     static func completion(_ kind: CompletionKind, lang: GalleryLang) -> GalleryDemoState {
         let state = AppState()
-        state.claudeUsage = usage()
         var s = session(source: "claude", project: "web-app", branch: "feat/dashboard",
                         terminalBundleId: "com.mitchellh.ghostty", status: .idle, startedMinutesAgo: 18)
         let prompt = lang.t("Add filters to the dashboard page", "给仪表盘页面加上筛选功能", "Füge der Dashboard-Seite Filter hinzu")

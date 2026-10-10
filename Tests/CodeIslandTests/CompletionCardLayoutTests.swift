@@ -17,7 +17,7 @@ final class CompletionCardLayoutTests: XCTestCase {
     private let keys = [
         SettingsKey.contentFontSize, SettingsKey.aiMessageLines, SettingsKey.maxVisibleSessions,
         SettingsKey.maxPanelHeight, SettingsKey.showTaskProgress, SettingsKey.showSessionRecap,
-        SettingsKey.showUsageStats, SettingsKey.showClaudeQuota, SettingsKey.showProjectName,
+        SettingsKey.showProjectName,
         SettingsKey.hideWhenNoSession,
     ]
     private var saved: [String: Any] = [:]
@@ -30,7 +30,6 @@ final class CompletionCardLayoutTests: XCTestCase {
             if let value = defaults.object(forKey: key) { saved[key] = value }
             defaults.removeObject(forKey: key)
         }
-        defaults.set(false, forKey: SettingsKey.showUsageStats)
     }
 
     override func tearDown() {

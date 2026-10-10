@@ -59,7 +59,7 @@ enum OffscreenRender {
         if let appearance { window.appearance = NSAppearance(named: appearance) }
         window.contentView = host
         defer { window.contentView = nil }
-        // Measured sizes (the completion reply, the quota chip) feed back
+        // Measured sizes (the completion reply, the right wing) feed back
         // into the layout over a couple of update passes.
         for _ in 0..<passes {
             host.layoutSubtreeIfNeeded()
@@ -242,10 +242,10 @@ struct DefaultsSandbox {
             SettingsKey.appLanguage, SettingsKey.contentFontSize, SettingsKey.showAgentDetails,
             SettingsKey.smartSuppress, SettingsKey.hideWhenNoSession, SettingsKey.showToolStatus,
             SettingsKey.collapsedWidthScale, SettingsKey.hapticOnHover, SettingsKey.hapticIntensity,
-            SettingsKey.sessionGroupingMode, SettingsKey.soundEnabled,
+            SettingsKey.soundEnabled,
             SettingsKey.quietHoursEnabled, SettingsKey.quietHoursStart, SettingsKey.quietHoursEnd,
             SettingsKey.autoCollapseAfterSessionJump, SettingsKey.maxVisibleSessions,
-            SettingsKey.showUsageStats, SettingsKey.showClaudeQuota, SettingsKey.showGitBranch,
+            SettingsKey.showGitBranch,
             SettingsKey.aiMessageLines, SettingsKey.notchHeightMode,
             SettingsKey.customNotchHeight, SettingsKey.collapseOnMouseLeave, SettingsKey.maxToolHistory,
             SettingsKey.showSessionRecap, SettingsKey.showModelLabel, SettingsKey.showTaskProgress,

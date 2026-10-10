@@ -204,36 +204,6 @@ enum DebugHarness {
         state.sessions["preview-multi-2"] = s2
         state.sessions["preview-multi-3"] = s3
         state.activeSessionId = "preview-multi-1"
-
-        // Usage footer + sparkline under the session list.
-        var fiveH = ClaudeUsageTotals()
-        fiveH.inputTokens = 182_000
-        fiveH.outputTokens = 96_500
-        fiveH.cacheCreationTokens = 240_000
-        fiveH.cacheReadTokens = 12_400_000
-        fiveH.messageCount = 118
-        var today = ClaudeUsageTotals()
-        today.inputTokens = 410_000
-        today.outputTokens = 233_000
-        today.cacheCreationTokens = 512_000
-        today.cacheReadTokens = 30_100_000
-        today.messageCount = 402
-        state.claudeUsage = ClaudeUsageScanner.Snapshot(
-            last5h: fiveH,
-            today: today,
-            hourlyOutputTokens: [0, 0, 4200, 18_000, 9500, 0, 22_000, 41_000, 12_000, 30_500, 52_000, 17_500],
-            scannedAt: Date()
-        )
-        state.claudeQuota.applyPreview(ClaudeQuotaSnapshot(
-            limits: [
-                // 72% with 3h of 5h left → 32pp ahead of pace → blocking, so
-                // the preview chip shows the session window in warning.
-                ClaudeQuotaLimit(kind: .session, percent: 72, severity: "warning", resetsAt: Date().addingTimeInterval(3 * 3600)),
-                ClaudeQuotaLimit(kind: .weeklyAll, percent: 30, resetsAt: Date().addingTimeInterval(2 * 86_400 + 4 * 3600)),
-                ClaudeQuotaLimit(kind: .weeklyScoped, percent: 48, resetsAt: Date().addingTimeInterval(2 * 86_400 + 4 * 3600), scopeLabel: "Fable"),
-            ],
-            fetchedAt: Date()
-        ))
     }
 
     private static func applyBusy(to state: AppState) {

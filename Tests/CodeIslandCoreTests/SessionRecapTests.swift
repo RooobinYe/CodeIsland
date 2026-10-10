@@ -70,7 +70,7 @@ final class SessionRecapTests: XCTestCase {
         )
         let recap = try XCTUnwrap(SessionRecap.from(transcriptLine: json))
         XCTAssertEqual(recap.text, "All tests pass.")
-        XCTAssertEqual(recap.createdAt, ClaudeUsageScanner.parseISO8601("2026-09-12T03:35:41.545Z"))
+        XCTAssertEqual(recap.createdAt, TranscriptTimestamp.parse("2026-09-12T03:35:41.545Z"))
     }
 
     func testRecapIgnoresOtherSubtypesAndSidechains() throws {
@@ -307,7 +307,7 @@ final class SessionRecapTests: XCTestCase {
         // SessionStart reported the new model before the attach scan.
         var session = SessionSnapshot()
         session.model = "claude-sonnet-5"
-        session.modelReportedAt = try XCTUnwrap(ClaudeUsageScanner.parseISO8601("2026-09-12T04:00:00.000Z"))
+        session.modelReportedAt = try XCTUnwrap(TranscriptTimestamp.parse("2026-09-12T04:00:00.000Z"))
 
         let older = scan([timedAssistantLine(model: "claude-opus-5-5", effort: "xhigh", at: "2026-09-12T03:59:00.000Z")])
         XCTAssertFalse(session.applyTranscriptBackfill(older))

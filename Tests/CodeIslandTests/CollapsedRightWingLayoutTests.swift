@@ -50,10 +50,10 @@ final class CollapsedRightWingLayoutTests: XCTestCase {
     }
 
     func testQuestionBadgeAndCompletionDotStayClearOfTheNotch() async throws {
-        for (glance, chip) in [(false, false), (true, false), (true, true)] {
-            let state = try await collapsedState(glance: glance, chip: chip)
+        for glance in [false, true] {
+            let state = try await collapsedState(glance: glance)
             let g = try renderedGeometry(state)
-            let name = "glance=\(glance) chip=\(chip)"
+            let name = "glance=\(glance)"
             XCTAssertNil(g.intrusion, "\(name): the right wing draws under the notch at \(g.intrusion ?? 0)pt")
             XCTAssertLessThanOrEqual(g.barRight, 620, "\(name): the bar runs past the panel window")
             XCTAssertGreaterThanOrEqual(g.barLeft, 0, "\(name): the bar runs past the panel window")
@@ -64,7 +64,7 @@ final class CollapsedRightWingLayoutTests: XCTestCase {
         // Tool status in detailed mode pads both wings: the badge and dot fit,
         // and the bar must stay exactly where it was.
         suite.set(true, forKey: SettingsKey.showToolStatus)
-        let state = try await collapsedState(glance: true, chip: false)
+        let state = try await collapsedState(glance: true)
         let g = try renderedGeometry(state)
         XCTAssertNil(g.intrusion)
         // Centred on the notch: base bar = notch + 2 × 41 + 20 + 3% of 1512.
@@ -76,8 +76,7 @@ final class CollapsedRightWingLayoutTests: XCTestCase {
 
     // MARK: - Fixture
 
-    private func collapsedState(glance: Bool, chip: Bool) async throws -> AppState {
-        suite.set(chip, forKey: SettingsKey.showClaudeQuota)
+    private func collapsedState(glance: Bool) async throws -> AppState {
         if suite.object(forKey: SettingsKey.showToolStatus) == nil {
             suite.set(false, forKey: SettingsKey.showToolStatus)
         }
@@ -91,12 +90,6 @@ final class CollapsedRightWingLayoutTests: XCTestCase {
         state.sessions = ["s1": session, "s2": other]
         state.activeSessionId = "s1"
         state.refreshDerivedState()
-        if chip {
-            let now = Date()
-            state.claudeQuota.applyPreview(ClaudeQuotaSnapshot(limits: [
-                ClaudeQuotaLimit(kind: .weeklyAll, percent: 20, resetsAt: now.addingTimeInterval(86_400)),
-            ], fetchedAt: now))
-        }
         let payload: [String: Any] = [
             "hook_event_name": "PermissionRequest", "session_id": "s1", "tool_name": "AskUserQuestion",
             "tool_input": ["questions": [[

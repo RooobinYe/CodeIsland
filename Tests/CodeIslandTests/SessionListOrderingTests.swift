@@ -120,42 +120,6 @@ final class SessionListOrderingTests: XCTestCase {
         XCTAssertEqual(freeze.apply(["b", "a"]), ["a", "b"])
     }
 
-    // MARK: - Group by status
-
-    func testGroupByStatusListsWaitingBeforeRunning() {
-        let sessions: [String: SessionSnapshot] = [
-            "run": session(.running),
-            "ask": session(.waitingQuestion),
-            "think": session(.processing),
-            "approve": session(.waitingApproval),
-            "rest": session(.idle),
-        ]
-        let groups = SessionListGrouping.byStatus(["approve", "ask", "run", "think", "rest"], sessions: sessions)
-        XCTAssertEqual(groups.map(\.labelKey), ["status_waiting", "status_running", "status_processing", "status_idle"])
-        XCTAssertEqual(groups.first?.ids, ["approve", "ask"], "a section keeps the list's order")
-    }
-
-    func testGroupByStatusSkipsEmptySections() {
-        let groups = SessionListGrouping.byStatus(["x"], sessions: ["x": session(.idle)])
-        XCTAssertEqual(groups.map(\.labelKey), ["status_idle"])
-    }
-
-    func testAHeldListKeepsEachCardInItsSection() {
-        var freeze = SessionOrderFreeze()
-        freeze.freeze(["ask", "run"], statuses: ["ask": .waitingApproval, "run": .running])
-        // The approval was just allowed: "ask" is running now.
-        let live: [String: AgentStatus] = ["ask": .running, "run": .running, "new": .idle]
-        let held = SessionListGrouping.byStatus(freeze.apply(["ask", "run", "new"])) {
-            freeze.status(of: $0, live: live[$0])
-        }
-        XCTAssertEqual(held.map(\.labelKey), ["status_waiting", "status_running", "status_idle"])
-        XCTAssertEqual(held.first?.ids, ["ask"], "the card changed section under the pointer")
-
-        freeze.thaw()
-        let released = SessionListGrouping.byStatus(["ask", "run", "new"]) { freeze.status(of: $0, live: live[$0]) }
-        XCTAssertEqual(released.map(\.labelKey), ["status_running", "status_idle"])
-    }
-
     func testCompactTooltipCutsALongReply() {
         XCTAssertEqual(CompactSessionRowMetrics.tooltip(name: "web-app", latest: nil), "web-app")
         XCTAssertEqual(CompactSessionRowMetrics.tooltip(name: "web-app", latest: "  Done.  "), "web-app\nDone.")
@@ -360,7 +324,7 @@ final class SessionListScrollWidthTests: XCTestCase {
         defer {
             sandbox.restore()
         }
-        let demo = try await GalleryDemo.list(count: 8, lang: .en, quota: false)
+        let demo = try await GalleryDemo.list(count: 8, lang: .en)
         defer { demo.release() }
         let panel = try PanelHost(demo.state, notchHeight: 32)
         defer { panel.close() }

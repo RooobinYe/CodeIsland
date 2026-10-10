@@ -30,7 +30,7 @@ public struct SessionRecap: Equatable, Sendable, Codable {
         guard json["subtype"] as? String == "away_summary",
               json["isSidechain"] as? Bool != true,
               let text = cleanedText(json["content"]) else { return nil }
-        let createdAt = (json["timestamp"] as? String).flatMap(ClaudeUsageScanner.parseISO8601) ?? observedAt
+        let createdAt = (json["timestamp"] as? String).flatMap(TranscriptTimestamp.parse) ?? observedAt
         return SessionRecap(text: text, createdAt: createdAt)
     }
 

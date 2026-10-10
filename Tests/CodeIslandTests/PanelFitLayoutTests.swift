@@ -74,9 +74,6 @@ final class PanelFitLayoutTests: XCTestCase {
 
     private func tallSessions(count: Int) throws -> Demo {
         let state = AppState()
-        var usage = ClaudeUsageTotals()
-        usage.outputTokens = 96_000
-        state.claudeUsage = ClaudeUsageScanner.Snapshot(last5h: usage, today: usage, hourlyOutputTokens: [1, 2, 3], scannedAt: Date())
         for index in 0..<count {
             var s = SessionSnapshot(startTime: Date().addingTimeInterval(-600))
             s.source = "claude"

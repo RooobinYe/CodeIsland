@@ -3,25 +3,6 @@ import XCTest
 
 /// Names and tooltips that explain the panel's terse controls.
 final class PanelCopyTests: XCTestCase {
-    private let hintKeys = ["group_all", "group_status", "group_cli"]
-
-    func testEveryLanguageSpellsOutThePanelControls() {
-        // zh and zh-Hant are not merged over English like de, so a missing
-        // key there would surface as the raw key in a tooltip.
-        for (lang, table) in L10n.strings {
-            for key in hintKeys {
-                XCTAssertFalse((table[key] ?? "").isEmpty, "\(lang) has no \(key)")
-            }
-        }
-    }
-
-    func testGroupingTabsNameWhatTheyDo() {
-        XCTAssertEqual(SessionGroupingTab.all.map(\.tag), ["all", "status", "cli"])
-        for tab in SessionGroupingTab.all {
-            XCTAssertNotNil(L10n.strings["en"]?[tab.nameKey], "\(tab.pixelLabel) has no spelled-out name")
-        }
-    }
-
     func testAboutPageCountsTheIntegrationsInsteadOfHardcodingThem() {
         // It said "Supports 11 CLI/IDE tools" long after there were 30+.
         XCTAssertGreaterThanOrEqual(ConfigInstaller.builtInIntegrationCount, 30)

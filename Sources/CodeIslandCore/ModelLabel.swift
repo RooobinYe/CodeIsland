@@ -21,7 +21,7 @@ public struct ModelObservation: Equatable, Sendable {
 
     /// When the line was written, if it said.
     public var observedAt: Date? {
-        lineTimestamp.flatMap(ClaudeUsageScanner.parseISO8601)
+        lineTimestamp.flatMap(TranscriptTimestamp.parse)
     }
 
     /// The same model and effort, whenever the line was written.

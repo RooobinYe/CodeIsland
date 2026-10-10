@@ -48,8 +48,7 @@ It works with **30+ AI coding tools**, installs its hooks for you, and keeps eve
 
 - Live status, current tool and latest reply for every session; finished replies render as Markdown (lists, tables, code)
 - The agent's own task checklist as a progress bar, Claude Code's "while you were away" recap, and (opt-in) model + reasoning effort
-- Git branch and worktree on each card; group sessions by project or tool
-- Claude usage stats, plus opt-in plan limits (5-hour and weekly)
+- Git branch and worktree on each card
 - A static logo per tool, so you can tell harnesses apart at a glance
 
 </td>
@@ -290,7 +289,7 @@ AI tool (Claude Code / Codex / Gemini / Cursor / …)
 
 CodeIsland installs lightweight hooks into each tool's own config. When the tool fires an event — session start, tool call, permission request, question, stop — the bridge forwards it as JSON over a local Unix socket, and the island updates instantly. The bridge never waits for a decision: the agent always asks in its own UI.
 
-**Privacy:** events never leave your Mac unless you opt in. CodeIsland makes no network requests unless you turn them on: Claude plan-limit lookups (sent to `api.anthropic.com` with your own Claude Code login), webhook forwarding to the URL you configure, and pushes to the services you set up.
+**Privacy:** events never leave your Mac unless you opt in. CodeIsland makes no network requests unless you turn them on: webhook forwarding to the URL you configure, and pushes to the services you set up.
 
 ## Settings
 
@@ -298,7 +297,7 @@ CodeIsland installs lightweight hooks into each tool's own config. When the tool
 |------|--------------|
 | **General** | Language, launch at login, display selection |
 | **Behavior** | Hover delay, smart suppress, completion style, follow-up reminders, session cleanup, silence rules, push notifications, webhook |
-| **Appearance** | Panel size, notch width, font size, reply lines, open/close speed, project name, git branch, task progress, session recap, model label, usage stats, plan limits |
+| **Appearance** | Panel size, notch width, font size, reply lines, open/close speed, project name, git branch, task progress, session recap, model label |
 | **Sound** | 8-bit sounds per event, volume, quiet hours, mute while away |
 | **Shortcuts** | Global hotkeys for toggle and jump |
 | **Remote** | SSH hosts and per-host directory filters |

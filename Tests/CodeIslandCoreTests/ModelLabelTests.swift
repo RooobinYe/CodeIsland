@@ -132,7 +132,7 @@ final class ModelLabelTests: XCTestCase {
 
     func testObservationKeepsTheLinesTimestampWithoutChangingEquality() {
         let timed = ModelObservation.from(model: "gpt-5.6-sol", effort: "max", timestamp: "2026-09-24T09:05:19.777Z")
-        XCTAssertEqual(timed?.observedAt, ClaudeUsageScanner.parseISO8601("2026-09-24T09:05:19.777Z"))
+        XCTAssertEqual(timed?.observedAt, TranscriptTimestamp.parse("2026-09-24T09:05:19.777Z"))
         XCTAssertEqual(timed, ModelObservation(model: "gpt-5.6-sol", effort: "max"))
         XCTAssertNil(ModelObservation.from(model: "gpt-5.6-sol", effort: nil, timestamp: "t")?.observedAt)
     }

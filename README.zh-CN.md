@@ -148,7 +148,7 @@ CodeIsland 启动时会自动写入以下配置，配置被改动时会自动修
 
 | 工具 | 安装位置 |
 |------|----------|
-| Claude Code | `~/.claude/settings.json`（遵循 `$CLAUDE_CONFIG_DIR`） |
+| Claude Code | 插件 `~/.claude/skills/codeisland/`，需要 2.1.157 及以上（遵循 `$CLAUDE_CONFIG_DIR`） |
 | Codex | `~/.codex/hooks.json`，[需要审核一次](#codex) |
 | Gemini CLI | `~/.gemini/settings.json` |
 | Google Antigravity | `~/.gemini/config/hooks.json` |

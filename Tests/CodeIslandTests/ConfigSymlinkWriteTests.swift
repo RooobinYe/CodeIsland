@@ -3,12 +3,10 @@ import XCTest
 import CodeIslandCore
 
 /// Hook writes through symlinked config files. Multi-account and dotfiles
-/// setups link `settings.json` / `hooks.json` / `config.toml` to a shared
-/// copy; an atomic replace used to turn the link into a detached regular
-/// file on the first write. Everything runs in a temporary directory, with
-/// `CODEX_HOME` pointed into it for the primary-root cases; nothing here goes
-/// through `installClaudeHooks` (it asks the installed `claude` for its
-/// version).
+/// setups link `hooks.json` / `config.toml` to a shared copy; an atomic
+/// replace used to turn the link into a detached regular file on the first
+/// write. Everything runs in a temporary directory, with `CODEX_HOME` pointed
+/// into it for the primary-root cases.
 final class ConfigSymlinkWriteTests: XCTestCase {
     private var sandbox: String!
     private var savedCodexHome: String?
@@ -75,25 +73,6 @@ final class ConfigSymlinkWriteTests: XCTestCase {
         // A second install (Codex rewrites hooks.json every time) keeps it too.
         XCTAssertEqual(ConfigInstaller.installHooks(inExtraDir: cli, fm: fm, primaryRoot: sandbox + "/primary", peers: []), .installed)
         XCTAssertTrue(isSymlink(root + "/hooks.json"))
-    }
-
-    func testUninstallThroughASymlinkedSettingsFileKeepsTheLink() throws {
-        let root = try makeDir("claude-work")
-        try fm.createDirectory(atPath: root + "/projects", withIntermediateDirectories: true)
-        let settings: [String: Any] = [
-            "model": "opus",
-            "hooks": ["Stop": [["matcher": "", "hooks": [["type": "command", "command": "~/.codeisland/codeisland-hook.sh"]]]]],
-        ]
-        let text = String(decoding: try JSONSerialization.data(withJSONObject: settings), as: UTF8.self)
-        let target = try linkToDotfile(root + "/settings.json", named: "claude-settings.json", contents: text)
-        let cli = try XCTUnwrap(ConfigInstaller.extraConfigDirCLI(for: ExtraConfigDir(cli: .claude, path: root)))
-
-        ConfigInstaller.uninstallHooks(cli: cli, fm: fm)
-
-        XCTAssertTrue(isSymlink(root + "/settings.json"))
-        let cleaned = try XCTUnwrap(JSONSerialization.jsonObject(with: XCTUnwrap(fm.contents(atPath: target))) as? [String: Any])
-        XCTAssertNil(cleaned["hooks"], "our hooks came out of the linked file")
-        XCTAssertEqual(cleaned["model"] as? String, "opus")
     }
 
     // MARK: - Primary root (the same write paths)

@@ -15,19 +15,18 @@ final class ClaudeConfigPathsWiringTests: XCTestCase {
         XCTAssertEqual(SettingsKey.claudeConfigDir, ClaudeConfigPaths.preferenceKey)
     }
 
-    /// The Claude CLIConfig carries `configPath: "settings.json"` — correct ONLY because
+    /// The Claude CLIConfig carries a relative `configPath` — correct ONLY because
     /// `rootOverride` supplies the config dir. Drop the override and `fullPath` silently
-    /// becomes `~/settings.json`: it would not error, it would write hooks into the
+    /// becomes `~/skills/…`: it would not error, it would write hooks into the
     /// user's home directory. Pin the resolved path to the resolver's own answer.
     func testClaudeConfigPathResolvesThroughRootOverride() throws {
         let claude = try XCTUnwrap(
             ConfigInstaller.allCLIs.first { $0.source == "claude" },
             "built-in Claude CLIConfig is missing")
 
-        XCTAssertEqual(claude.fullPath, ClaudeConfigPaths.settingsPath())
-        XCTAssertEqual(claude.dirPath, ClaudeConfigPaths.configDir())
+        XCTAssertEqual(claude.fullPath, ClaudeConfigPaths.configDir() + "/skills/codeisland/hooks/hooks.json")
         XCTAssertNotEqual(
-            claude.fullPath, NSHomeDirectory() + "/settings.json",
+            claude.fullPath, NSHomeDirectory() + "/skills/codeisland/hooks/hooks.json",
             "rootOverride was dropped — hooks would be written to the home directory")
     }
 }

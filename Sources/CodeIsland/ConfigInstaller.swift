@@ -127,8 +127,6 @@ struct CLIConfig {
     let configKey: String      // top-level JSON key containing hooks ("hooks" for most)
     let format: HookFormat
     let events: [(String, Int, Bool)]  // (eventName, timeout, async)
-    /// Events that require a minimum CLI version (eventName → minVersion like "2.1.89")
-    var versionedEvents: [String: String] = [:]
     /// Optional root directory override. When set, `configPath` is resolved relative to this
     /// directory instead of the user's home (used by Codex to honor $CODEX_HOME).
     var rootOverride: (@Sendable () -> String)? = nil
@@ -316,10 +314,11 @@ struct ConfigInstaller {
     // MARK: - All supported CLIs
 
     private static let builtInCLIs: [CLIConfig] = [
-        // Claude Code — uses hook script (with bridge dispatcher + nc fallback)
+        // Claude Code — uses hook script (with bridge dispatcher + nc fallback),
+        // shipped as a plugin under skills/ (see installClaudeHooks)
         CLIConfig(
             name: "Claude Code", source: "claude",
-            configPath: "settings.json", configKey: "hooks",
+            configPath: claudeHooksFile, configKey: "hooks",
             format: .claude,
             events: [
                 ("UserPromptSubmit", 5, true),
@@ -339,15 +338,8 @@ struct ConfigInstaller {
                 ("Notification", 86400, false),
                 ("PreCompact", 5, true),
             ],
-            versionedEvents: [
-                "PostToolUseFailure": "2.1.89",
-                // Added in Claude Code 2.1.78 (CHANGELOG: "Added `StopFailure`
-                // hook event…"); gated like PostToolUseFailure so an older
-                // build never sees a hook key it does not know.
-                "StopFailure": "2.1.78",
-            ],
             rootOverride: { ClaudeConfigPaths.configDir() },
-            displayPathOverride: { ClaudeConfigPaths.displayPath(ClaudeConfigPaths.settingsPath()) }
+            displayPathOverride: { ClaudeConfigPaths.displayPath(ClaudeConfigPaths.configDir() + "/" + claudeHooksFile) }
         ),
         // Codex — honors $CODEX_HOME (falls back to ~/.codex)
         CLIConfig(
@@ -1243,6 +1235,8 @@ struct ConfigInstaller {
         // MiniMax Code CLI: detect the data root (honors $MINIMAX_DATA_DIR) —
         // the plugin dir only exists AFTER we install hooks.
         if source == "minimax" { return minimaxPresenceDetected() }
+        // The plugin folder only exists AFTER we install hooks.
+        if source == "claude" { return FileManager.default.fileExists(atPath: ClaudeConfigPaths.configDir()) }
         guard let cli = allCLIs.first(where: { $0.source == source }) else { return false }
         return FileManager.default.fileExists(atPath: cli.dirPath)
     }
@@ -1425,6 +1419,8 @@ struct ConfigInstaller {
                 // generic dirPath check would never exist pre-install; the
                 // data root itself is the installation marker.
                 dirExists = fm.fileExists(atPath: minimaxHome())
+            } else if cli.source == "claude" {
+                dirExists = fm.fileExists(atPath: ClaudeConfigPaths.configDir())
             } else {
                 dirExists = fm.fileExists(atPath: cli.dirPath)
             }
@@ -1580,138 +1576,44 @@ struct ConfigInstaller {
         return json
     }
 
-    // MARK: - CLI Version Detection
-
-    /// How `compatibleEvents` learns the installed Claude Code's version.
-    /// Detecting it starts the user's real `claude`, so a test process gets
-    /// "unknown" — what a machine without Claude Code gets — unless a test
-    /// installs a version of its own.
-    static var claudeVersionProvider: () -> String? = {
-        RuntimeEnvironment.isRunningTests ? nil : detectClaudeVersion()
-    }
-
-    /// Detect installed Claude Code version by running `claude --version`.
-    /// Cache is guarded by a lock because `install()` and `verifyAndRepair()`
-    /// can both call this from `Task.detached` since #139 (#103 review).
-    private static var cachedClaudeVersion: String?
-    private static let cachedClaudeVersionLock = NSLock()
-    private static func detectClaudeVersion() -> String? {
-        cachedClaudeVersionLock.lock()
-        if let cached = cachedClaudeVersion {
-            cachedClaudeVersionLock.unlock()
-            return cached
-        }
-        cachedClaudeVersionLock.unlock()
-
-        // Find claude binary — GUI apps don't inherit user's shell PATH
-        guard let claudePath = claudeBinaryCandidates().first(where: { FileManager.default.isExecutableFile(atPath: $0) }) else {
-            return nil
-        }
-        // 5s timeout: a stuck `claude --version` used to freeze app launch (#139).
-        guard let data = ProcessRunner.run(path: claudePath, args: ["--version"], timeout: 5),
-              let output = String(data: data, encoding: .utf8) else {
-            return nil
-        }
-        // Parse "2.1.92 (Claude Code)" → "2.1.92"
-        let version = output.trimmingCharacters(in: .whitespacesAndNewlines)
-            .components(separatedBy: " ").first ?? ""
-        guard !version.isEmpty else { return nil }
-        cachedClaudeVersionLock.lock()
-        cachedClaudeVersion = version
-        cachedClaudeVersionLock.unlock()
-        return version
-    }
-
-    /// Where `claude` lives, in the order a login shell would usually find it:
-    /// the native installer, Homebrew on Apple Silicon (the cask, or npm with
-    /// Homebrew's node), Intel Homebrew / a /usr/local npm prefix, and the old
-    /// `claude migrate-installer` local install. Without a version, the
-    /// version-gated events (PostToolUseFailure, StopFailure) are skipped.
-    static func claudeBinaryCandidates(home: String = NSHomeDirectory()) -> [String] {
-        [
-            home + "/.local/bin/claude",
-            "/opt/homebrew/bin/claude",
-            "/usr/local/bin/claude",
-            home + "/.claude/local/claude",
-        ]
-    }
-
-    /// Compare semver strings: returns true if `installed` >= `required`
-    static func versionAtLeast(_ installed: String, _ required: String) -> Bool {
-        let i = installed.split(separator: ".").compactMap { Int($0) }
-        let r = required.split(separator: ".").compactMap { Int($0) }
-        for idx in 0..<max(i.count, r.count) {
-            let iv = idx < i.count ? i[idx] : 0
-            let rv = idx < r.count ? r[idx] : 0
-            if iv > rv { return true }
-            if iv < rv { return false }
-        }
-        return true // equal
-    }
-
-    /// Filter events based on installed CLI version
-    private static func compatibleEvents(for cli: CLIConfig) -> [(String, Int, Bool)] {
-        guard !cli.versionedEvents.isEmpty else { return cli.events }
-
-        // Only Claude Code needs version checking for now
-        guard cli.source == "claude" else { return cli.events }
-        let version = claudeVersionProvider()
-
-        return cli.events.filter { (event, _, _) in
-            guard let minVer = cli.versionedEvents[event] else { return true }
-            guard let version else { return false } // can't detect version → skip risky events
-            return versionAtLeast(version, minVer)
-        }
-    }
-
     // MARK: - Claude Code (special: uses hook script)
+    //
+    // Claude Code 2.1.157+ loads `<config dir>/skills/<name>/` as a plugin on
+    // its own, so the hooks live in a folder that is entirely ours and the
+    // user's settings.json is never touched:
+    //
+    //   <config dir>/skills/codeisland/
+    //   ├── .claude-plugin/plugin.json
+    //   └── hooks/hooks.json
+
+    static let claudeHooksFile = "skills/codeisland/hooks/hooks.json"
+
+    private static func claudePluginDir(_ cli: CLIConfig) -> String {
+        (cli.dirPath as NSString).deletingLastPathComponent
+    }
 
     private static func installClaudeHooks(cli: CLIConfig, fm: FileManager) -> Bool {
-        let dir = cli.dirPath
-        if !fm.fileExists(atPath: dir) {
-            try? fm.createDirectory(atPath: dir, withIntermediateDirectories: true)
+        let pluginDir = claudePluginDir(cli)
+        try? fm.createDirectory(atPath: pluginDir + "/.claude-plugin", withIntermediateDirectories: true)
+        try? fm.createDirectory(atPath: cli.dirPath, withIntermediateDirectories: true)
+
+        var hooks: [String: Any] = [:]
+        for (event, timeout, _) in cli.events {
+            hooks[event] = [["matcher": "", "hooks": [["type": "command", "command": hookCommand, "timeout": timeout]]]]
         }
+        let manifest: [String: Any] = [
+            "name": "codeisland", "version": "1.0.0", "description": "CodeIsland hooks", "author": ["name": "CodeIsland"],
+        ]
 
-        // Read raw text (preserved verbatim for minimal-diff write-back).
-        let originalText: String? = fm.contents(atPath: cli.fullPath).flatMap { String(data: $0, encoding: .utf8) }
-        // Refuse to touch unparseable files (#89 — protect user data).
-        if let text = originalText, !text.isEmpty, parseJSONFile(at: cli.fullPath, fm: fm) == nil {
-            return false
+        // Runs on every launch: leave files that are already current alone.
+        func write(_ object: [String: Any], to path: String) -> Bool {
+            guard let data = try? JSONSerialization.data(
+                withJSONObject: object, options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
+            ) else { return false }
+            return fm.contents(atPath: path) == data || ConfigPathIdentity.write(data, to: path, fileManager: fm)
         }
-
-        let settings = parseJSONFile(at: cli.fullPath, fm: fm) ?? [:]
-        var hooks = settings[cli.configKey] as? [String: Any] ?? [:]
-        let events = compatibleEvents(for: cli)
-
-        let alreadyInstalled = events.allSatisfy { (event, _, _) in
-            guard let entries = hooks[event] as? [[String: Any]] else { return false }
-            return entries.contains { entry in
-                guard let hookList = entry["hooks"] as? [[String: Any]] else { return false }
-                return hookList.contains { ($0["command"] as? String) == hookCommand }
-            }
-        }
-        if alreadyInstalled && !hasStaleAsyncKey(hooks) { return true }
-
-        // Remove all managed hooks first, including legacy Vibe Island entries.
-        hooks = removeManagedHookEntries(from: hooks)
-
-        // Re-install only compatible events
-        for (event, timeout, _) in events {
-            var eventHooks = hooks[event] as? [[String: Any]] ?? []
-            let hookEntry: [String: Any] = [
-                "type": "command", "command": hookCommand, "timeout": timeout,
-            ]
-            eventHooks.append(["matcher": "", "hooks": [hookEntry]])
-            hooks[event] = eventHooks
-        }
-
-        return writeJSONWithKey(
-            cli: cli,
-            originalText: originalText,
-            key: cli.configKey,
-            value: hooks,
-            fm: fm
-        )
+        return write(manifest, to: pluginDir + "/.claude-plugin/plugin.json")
+            && write([cli.configKey: hooks], to: cli.fullPath)
     }
 
     /// Minimal-diff write of a single top-level key, preserving user comments / key order / escaping.
@@ -3116,6 +3018,10 @@ struct ConfigInstaller {
         }
         if cli.format == .minimaxPlugin {
             uninstallMinimaxHooks(cli: cli, fm: fm)
+            return
+        }
+        if cli.source == "claude" {
+            try? fm.removeItem(atPath: claudePluginDir(cli))
             return
         }
         if cli.format == .kimi {

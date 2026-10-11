@@ -54,6 +54,7 @@ struct DiagnosticsExporter {
         let home = fm.homeDirectoryForCurrentUser.path
         let configs: [(source: String, dest: String)] = [
             (ClaudeConfigPaths.settingsPath(), "configs/claude-settings.json"),
+            (ClaudeConfigPaths.configDir() + "/" + ConfigInstaller.claudeHooksFile, "configs/claude-plugin-hooks.json"),
             ("\(home)/.codex/hooks.json", "configs/codex-hooks.json"),
             ("\(home)/.gemini/settings.json", "configs/gemini-settings.json"),
             ("\(home)/.cursor/hooks.json", "configs/cursor-hooks.json"),

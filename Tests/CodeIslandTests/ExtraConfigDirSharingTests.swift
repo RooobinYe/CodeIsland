@@ -42,15 +42,18 @@ final class ExtraConfigDirSharingTests: XCTestCase {
         try fm.createSymbolicLink(atPath: path, withDestinationPath: destination)
     }
 
-    /// What `installClaudeHooks` writes, without asking `claude` its version.
-    private func writeClaudeSettingsWithOurHooks(at path: String) throws {
-        let cli = try XCTUnwrap(ConfigInstaller.extraConfigDirCLI(for: ExtraConfigDir(cli: .claude, path: "/unused")))
+    /// The plugin's hooks.json, as `installClaudeHooks` writes it under `root`.
+    private func writeClaudePluginHooks(into root: String) throws {
+        let cli = try XCTUnwrap(ConfigInstaller.extraConfigDirCLI(for: ExtraConfigDir(cli: .claude, path: root)))
         var hooks: [String: Any] = [:]
         for (event, timeout, _) in cli.events {
             hooks[event] = [["matcher": "", "hooks": [["type": "command", "command": ourClaudeCommand, "timeout": timeout]]]]
         }
-        try JSONSerialization.data(withJSONObject: ["model": "opus", "hooks": hooks]).write(to: URL(fileURLWithPath: path))
+        try fm.createDirectory(atPath: cli.dirPath, withIntermediateDirectories: true)
+        try JSONSerialization.data(withJSONObject: ["hooks": hooks]).write(to: URL(fileURLWithPath: cli.fullPath))
     }
+
+    private func claudeHooks(_ root: String) -> String { root + "/" + ConfigInstaller.claudeHooksFile }
 
     /// Hooks installed into `root` as an extra Codex/Grok root would get them.
     private func installExternal(_ cli: ConfigDirCLI, into root: String) throws {
@@ -80,7 +83,7 @@ final class ExtraConfigDirSharingTests: XCTestCase {
     /// removing the entry must not uninstall the (now primary) hooks.
     func testRemovingADirThatBecameThePrimaryKeepsThePrimaryHooks() throws {
         let work = try makeRoot("claude-work", dirs: ["projects"])
-        try writeClaudeSettingsWithOurHooks(at: work + "/settings.json")
+        try writeClaudePluginHooks(into: work)
         let dir = ExtraConfigDir(cli: .claude, path: work)
         register([dir])
 
@@ -90,7 +93,7 @@ final class ExtraConfigDirSharingTests: XCTestCase {
         XCTAssertTrue(status.sameAsPrimary)
 
         XCTAssertEqual(ConfigInstaller.removeExtraConfigDir(id: dir.id, defaults: defaults, primaryRoot: { _ in work }), dir)
-        XCTAssertTrue(hasOurHooks(at: work + "/settings.json"))
+        XCTAssertTrue(hasOurHooks(at: claudeHooks(work)))
         XCTAssertEqual(ExtraConfigDirs.load(from: defaults), [])
     }
 
@@ -111,24 +114,24 @@ final class ExtraConfigDirSharingTests: XCTestCase {
     /// after it was registered (registration-time checks cannot see that).
     func testASymlinkToThePrimaryCreatedAfterRegistrationIsRecognised() throws {
         let primary = try makeRoot("claude", dirs: ["projects"])
-        try writeClaudeSettingsWithOurHooks(at: primary + "/settings.json")
+        try writeClaudePluginHooks(into: primary)
         let alias = sandbox + "/claude-work"
         try link(alias, to: primary)
         let dir = ExtraConfigDir(cli: .claude, path: alias)
         register([dir])
 
         ConfigInstaller.removeExtraConfigDir(id: dir.id, defaults: defaults, primaryRoot: { _ in primary })
-        XCTAssertTrue(hasOurHooks(at: primary + "/settings.json"))
+        XCTAssertTrue(hasOurHooks(at: claudeHooks(primary)))
     }
 
     // MARK: - Shared files inside distinct roots
 
-    /// Two Claude accounts sharing one settings.json through a symlink.
-    func testPausingAnAccountThatSharesThePrimarySettingsFileKeepsItsHooks() throws {
+    /// Two Claude accounts sharing one skills/ folder through a symlink.
+    func testPausingAnAccountThatSharesThePrimarySkillsFolderKeepsItsHooks() throws {
         let primary = try makeRoot("claude", dirs: ["projects"])
-        try writeClaudeSettingsWithOurHooks(at: primary + "/settings.json")
+        try writeClaudePluginHooks(into: primary)
         let work = try makeRoot("claude-work", dirs: ["projects"])
-        try link(work + "/settings.json", to: primary + "/settings.json")
+        try link(work + "/skills", to: primary + "/skills")
         let dir = ExtraConfigDir(cli: .claude, path: work)
         register([dir])
 
@@ -137,9 +140,9 @@ final class ExtraConfigDirSharingTests: XCTestCase {
         XCTAssertEqual(status.sharedHooksWith, primary)
 
         ConfigInstaller.setExtraConfigDirEnabled(id: dir.id, enabled: false, defaults: defaults, primaryRoot: { _ in primary })
-        XCTAssertTrue(hasOurHooks(at: primary + "/settings.json"))
+        XCTAssertTrue(hasOurHooks(at: claudeHooks(primary)))
         ConfigInstaller.removeExtraConfigDir(id: dir.id, defaults: defaults, primaryRoot: { _ in primary })
-        XCTAssertTrue(hasOurHooks(at: primary + "/settings.json"))
+        XCTAssertTrue(hasOurHooks(at: claudeHooks(primary)))
     }
 
     /// (d) A Grok root whose `hooks/` folder is linked to the primary's: the
@@ -218,7 +221,8 @@ final class ExtraConfigDirSharingTests: XCTestCase {
         let dir = ExtraConfigDir(cli: .claude, path: "/Users/t/.claude-work")
         let base = ExtraConfigDirStatus(
             dir: dir, inspection: .ready, hooksInstalled: true, sourceEnabled: true,
-            displayConfigPath: "~/.claude-work/settings.json", fullConfigPath: "/Users/t/.claude-work/settings.json"
+            displayConfigPath: "~/.claude-work/\(ConfigInstaller.claudeHooksFile)",
+            fullConfigPath: "/Users/t/.claude-work/\(ConfigInstaller.claudeHooksFile)"
         )
         var same = base
         same.sameAsPrimary = true
@@ -232,10 +236,10 @@ final class ExtraConfigDirSharingTests: XCTestCase {
             XCTAssertTrue(sameNote.contains("Claude Code"), "\(language)")
             XCTAssertNil(ExtraConfigDirText.statusProblem(same, l10n: l10n))
             let sharedNote = try XCTUnwrap(ExtraConfigDirText.statusNote(shared, l10n: l10n))
-            XCTAssertTrue(sharedNote.contains("settings.json") && sharedNote.contains("/Users/t/.claude"), "\(language): \(sharedNote)")
+            XCTAssertTrue(sharedNote.contains(ConfigInstaller.claudeHooksFile) && sharedNote.contains("/Users/t/.claude"), "\(language): \(sharedNote)")
             let added = ExtraConfigDirText.added(dir, outcome: .shared(with: "/Users/t/.claude"), l10n: l10n)
             XCTAssertFalse(added.hasPrefix("extra_config_dirs_"), "\(language)")
-            XCTAssertTrue(added.contains("settings.json"), "\(language): \(added)")
+            XCTAssertTrue(added.contains(ConfigInstaller.claudeHooksFile), "\(language): \(added)")
         }
     }
 }

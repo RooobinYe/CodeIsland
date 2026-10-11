@@ -3,7 +3,7 @@ import XCTest
 @testable import CodeIslandCore
 
 /// #211 — Claude Code Desktop support. Local Code-tab sessions run the same
-/// engine as the CLI and fire the same ~/.claude/settings.json hooks; their
+/// engine as the CLI and fire the same ~/.claude hooks; their
 /// hook subprocesses inherit __CFBundleIdentifier=com.anthropic.claudefordesktop.
 final class ClaudeDesktopSupportTests: XCTestCase {
 

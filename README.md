@@ -148,7 +148,7 @@ CodeIsland writes these for you on launch (and repairs them if they drift); each
 
 | Tool | Installed into |
 |------|----------------|
-| Claude Code | `~/.claude/settings.json` (honours `$CLAUDE_CONFIG_DIR`) |
+| Claude Code | plugin at `~/.claude/skills/codeisland/` — needs 2.1.157+ (honours `$CLAUDE_CONFIG_DIR`) |
 | Codex | `~/.codex/hooks.json` — [needs a one-time review](#codex) |
 | Gemini CLI | `~/.gemini/settings.json` |
 | Google Antigravity | `~/.gemini/config/hooks.json` |

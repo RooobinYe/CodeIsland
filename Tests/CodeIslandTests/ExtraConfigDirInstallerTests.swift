@@ -35,7 +35,7 @@ final class ExtraConfigDirInstallerTests: XCTestCase {
     // MARK: - Materialising the CLIConfig
 
     func testExtraRootReusesTheBuiltInEntryReRootedAtTheDirectory() throws {
-        for (cli, file) in [(ConfigDirCLI.claude, "settings.json"), (.codex, "hooks.json"), (.grok, "hooks/codeisland.json")] {
+        for (cli, file) in [(ConfigDirCLI.claude, ConfigInstaller.claudeHooksFile), (.codex, "hooks.json"), (.grok, "hooks/codeisland.json")] {
             let config = try XCTUnwrap(ConfigInstaller.extraConfigDirCLI(for: ExtraConfigDir(cli: cli, path: "/acct/\(cli)")))
             let builtIn = try XCTUnwrap(ConfigInstaller.allCLIs.first { $0.source == cli.source })
             XCTAssertEqual(config.source, cli.source, "events report as the ordinary \(cli) source")
@@ -137,31 +137,29 @@ final class ExtraConfigDirInstallerTests: XCTestCase {
         XCTAssertFalse(fm.fileExists(atPath: root + "/hooks"))
     }
 
-    // MARK: - Claude (detection and removal only)
+    // MARK: - Claude
 
-    func testClaudeRootHooksAreDetectedAndRemoved() throws {
+    func testClaudeRootGetsAPluginAndSettingsAreLeftAlone() throws {
         let root = try makeRoot("claude-work", dirs: ["projects"])
+        let settings = #"{"model": "opus", "hooks": {"Stop": [{"hooks": [{"type": "command", "command": "say done"}]}]}}"#
+        XCTAssertTrue(fm.createFile(atPath: root + "/settings.json", contents: Data(settings.utf8)))
         let dir = ExtraConfigDir(cli: .claude, path: root)
         let cli = try XCTUnwrap(ConfigInstaller.extraConfigDirCLI(for: dir))
 
-        // What installClaudeHooks writes: the shared hook script on every event,
-        // next to a hook of the user's own.
-        var hooks: [String: Any] = [:]
-        for (event, timeout, _) in cli.events {
-            hooks[event] = [["matcher": "", "hooks": [["type": "command", "command": "~/.codeisland/codeisland-hook.sh", "timeout": timeout]]]]
-        }
-        hooks["Stop"] = (hooks["Stop"] as? [[String: Any]] ?? []) + [["matcher": "", "hooks": [["type": "command", "command": "say done"]]]]
-        let settings: [String: Any] = ["model": "opus", "hooks": hooks]
-        try JSONSerialization.data(withJSONObject: settings).write(to: URL(fileURLWithPath: root + "/settings.json"))
+        XCTAssertEqual(ConfigInstaller.installHooks(inExtraDir: cli, fm: fm, primaryRoot: sandbox.appendingPathComponent("primary").path, peers: []), .installed)
 
+        let plugin = root + "/skills/codeisland"
+        XCTAssertEqual(try json(atPath: plugin + "/.claude-plugin/plugin.json")["name"] as? String, "codeisland")
+        let hooks = try XCTUnwrap(try json(atPath: plugin + "/hooks/hooks.json")["hooks"] as? [String: Any])
+        XCTAssertEqual(Set(hooks.keys), Set(cli.events.map(\.0)), "every event, no version gate")
         XCTAssertTrue(try XCTUnwrap(ConfigInstaller.extraConfigDirStatus(for: dir)).hooksInstalled)
+        XCTAssertEqual(String(decoding: try XCTUnwrap(fm.contents(atPath: root + "/settings.json")), as: UTF8.self), settings)
 
         ConfigInstaller.uninstallHooks(cli: cli, fm: fm)
 
-        let cleaned = try json(atPath: root + "/settings.json")
-        XCTAssertEqual(cleaned["model"] as? String, "opus", "unrelated settings survive")
-        let cleanedHooks = try XCTUnwrap(cleaned["hooks"] as? [String: Any])
-        XCTAssertEqual(Array(cleanedHooks.keys), ["Stop"])
+        XCTAssertFalse(fm.fileExists(atPath: plugin))
+        XCTAssertTrue(fm.fileExists(atPath: root + "/skills"), "only our folder goes")
+        XCTAssertEqual(String(decoding: try XCTUnwrap(fm.contents(atPath: root + "/settings.json")), as: UTF8.self), settings)
         XCTAssertFalse(try XCTUnwrap(ConfigInstaller.extraConfigDirStatus(for: dir)).hooksInstalled)
     }
 

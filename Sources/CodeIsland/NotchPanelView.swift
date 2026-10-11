@@ -1008,25 +1008,12 @@ private struct SessionIdentityLine: View {
     private func line(showsShortId: Bool) -> some View {
         let headline = session.headline(showProjectName: showProjectName)
         return HStack(spacing: 4) {
-            if headline.kind == .project {
-                ProjectNameLink(
-                    name: headline.text,
-                    cwd: session.cwd,
-                    isInteractive: !session.isRemote,
-                    fontSize: projectFontSize,
-                    color: projectColor
-                )
+            Text(headline.text)
+                .font(.system(size: projectFontSize, weight: .bold, design: .monospaced))
+                .foregroundStyle(projectColor)
+                .lineLimit(1)
+                .truncationMode(.tail)
                 .layoutPriority(2)
-            } else {
-                // Project name hidden: no folder link and no path tooltip either,
-                // or hovering the card would still reveal it.
-                Text(headline.text)
-                    .font(.system(size: projectFontSize, weight: .bold, design: .monospaced))
-                    .foregroundStyle(projectColor)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-                    .layoutPriority(2)
-            }
 
             if showGitBranch, let branch = session.gitBranch {
                 let label = session.gitIsWorktree ? "\(branch) ⧉" : branch
@@ -1069,28 +1056,6 @@ private struct SessionIdentityLine: View {
                     .fixedSize()
             }
         }
-    }
-}
-
-private struct ProjectNameLink: View {
-    let name: String
-    let cwd: String?
-    let isInteractive: Bool
-    let fontSize: CGFloat
-    let color: Color
-
-    var body: some View {
-        Text(name)
-            .font(.system(size: fontSize, weight: .bold, design: .monospaced))
-            .foregroundStyle(color)
-            .lineLimit(1)
-            .truncationMode(.tail)
-            .onTapGesture {
-                if isInteractive, let cwd = cwd {
-                    NSWorkspace.shared.open(URL(fileURLWithPath: cwd))
-                }
-            }
-            .help(isInteractive && cwd != nil ? "\(L10n.shared["open_path"]) \(cwd ?? "")" : "")
     }
 }
 

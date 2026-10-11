@@ -137,6 +137,19 @@ struct TerminalActivator {
             return
         }
 
+        // A Codex Desktop (ChatGPT app) thread: open that exact thread. Raising the
+        // app alone left the user on whichever thread it last showed.
+        if session.source == "codex",
+           let url = codexDesktopThreadURL(
+               for: session,
+               sessionId: sessionId,
+               spawnedByDesktopApp: session.termBundleId == AppState.codexAppBundleId
+                   || cliDescends(from: AppState.codexAppBundleId, session: session)
+           ) {
+            openInCodexDesktop(url)
+            return
+        }
+
         // Native app by bundle ID (e.g. Codex APP vs Codex CLI). These are IDE-style
         // apps (Cursor, Trae, Qoder, Factory, …) that can hold several workspace
         // windows at once, so match the one whose title contains the session's
@@ -188,7 +201,11 @@ struct TerminalActivator {
         // editing in VS Code — without this, the inherited TERM_PROGRAM=ghostty would jump
         // to the wrong terminal. Also covers cases where the terminal bundle ID is present
         // but the user wants to focus the desktop IDE instead (e.g. opencode → OpenCode).
-        if let nativeBundleId = sourceToNativeAppBundleId[session.source],
+        // A session with a controlling tty is running in a terminal, so the open
+        // desktop app is not where it lives: Codex CLI in Ghostty used to jump to the
+        // ChatGPT app (com.openai.codex) whenever that happened to be running.
+        if !hasTerminal(session), !runsOnCodexDaemon(session),
+           let nativeBundleId = sourceToNativeAppBundleId[session.source],
            NSWorkspace.shared.runningApplications.contains(where: { $0.bundleIdentifier == nativeBundleId }) {
             activateByBundleId(nativeBundleId)
             return
@@ -315,14 +332,7 @@ struct TerminalActivator {
         }
 
         if lower == "ghostty" {
-            activateGhostty(
-                cwd: session.cwd,
-                tty: effectiveTty,
-                sessionId: sessionId,
-                source: session.source,
-                tmuxPane: session.tmuxPane,
-                tmuxEnv: session.tmuxEnv
-            )
+            activateGhostty(session: session)
             return
         }
 
@@ -384,6 +394,80 @@ struct TerminalActivator {
     /// Used to jump back to GUI host clients (e.g. OpenChamber) that embed an agent such
     /// as OpenCode as a managed server process. The ancestor walk is bounded (≤32 hops)
     /// and click-driven, so cost is negligible.
+    /// True when the CLI has a controlling tty — i.e. it runs in a terminal tab
+    /// rather than being spawned by a desktop app. The captured `_tty` alone misses
+    /// agents that run hooks detached from the terminal (Claude Code, so the bridge
+    /// can't open `/dev/tty`), so the live CLI process is asked as well.
+    static func hasTerminal(_ session: SessionSnapshot) -> Bool {
+        if let tty = session.ttyPath, !tty.isEmpty { return true }
+        if let pane = session.tmuxPane, !pane.isEmpty { return true }
+        guard let pid = session.cliPid, pid > 1 else { return false }
+        var info = proc_bsdinfo()
+        let ret = proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &info, Int32(MemoryLayout<proc_bsdinfo>.size))
+        return ret > 0 && info.e_tdev != UInt32.max  // NODEV: no controlling tty
+    }
+
+    /// Codex CLI 0.16x runs its threads on a shared background app-server (`codex
+    /// app-server --listen`, started by the first TUI and owned by launchd) and only
+    /// renders them in the terminal. Hooks then run under that server, so the session
+    /// has no tty — yet it is still a terminal session, not the desktop app's.
+    /// The server can't say which terminal shows which thread, so the jump lands on
+    /// the terminal app only; `codex --no-daemon` keeps the thread in the TUI process
+    /// and makes the tab match exact again.
+    static func runsOnCodexDaemon(_ session: SessionSnapshot) -> Bool {
+        guard session.source == "codex", let pid = session.cliPid, pid > 1 else { return false }
+        return parentPID(of: pid) == 1
+    }
+
+    /// `codex://threads/<id>` for a thread owned by the Codex desktop app (shipped
+    /// as ChatGPT.app, still `com.openai.codex`). The app routes this link to the
+    /// thread view — the same route its own "open in" bridge uses (verified in the
+    /// shipped bundle, 26.1007). Nil for Codex CLI sessions, which live in a terminal —
+    /// including one in the app's own terminal pane, which also carries its bundle id.
+    ///
+    /// `spawnedByDesktopApp` can't rest on `termBundleId` alone: ChatGPT 26.x starts
+    /// its bundled `codex app-server` without `__CFBundleIdentifier`, so its threads
+    /// arrive looking like bare CLI sessions. The caller also checks the process tree.
+    static func codexDesktopThreadURL(
+        for session: SessionSnapshot,
+        sessionId: String?,
+        spawnedByDesktopApp: Bool
+    ) -> URL? {
+        guard session.source == "codex", spawnedByDesktopApp,
+              !hasTerminal(session) else { return nil }
+        let rawId = session.providerSessionId
+            ?? sessionId.map { id in
+                id.hasPrefix(AppState.codexAppSessionPrefix)
+                    ? String(id.dropFirst(AppState.codexAppSessionPrefix.count))
+                    : id
+            }
+        guard let threadId = rawId?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !threadId.isEmpty,
+              let encoded = threadId.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed)
+        else { return nil }
+        return URL(string: "codex://threads/\(encoded)")
+    }
+
+    /// Reopen the Codex app like a Dock click (brings back a closed or hidden main
+    /// window and switches Space), then hand it the thread link — the same order
+    /// `AppState.openInClaudeDesktop` uses for Claude Desktop.
+    private static func openInCodexDesktop(_ deepLink: URL) {
+        let workspace = NSWorkspace.shared
+        let bundleId = AppState.codexAppBundleId
+        if let app = NSRunningApplication.runningApplications(withBundleIdentifier: bundleId).first,
+           app.isHidden {
+            app.unhide()
+        }
+        guard let appURL = workspace.urlForApplication(withBundleIdentifier: bundleId) else {
+            activateByBundleId(bundleId)
+            return
+        }
+        let configuration = NSWorkspace.OpenConfiguration()
+        configuration.activates = true
+        workspace.openApplication(at: appURL, configuration: configuration)
+        workspace.open([deepLink], withApplicationAt: appURL, configuration: configuration)
+    }
+
     private static func resolveHostClientBundleId(for session: SessionSnapshot) -> String? {
         guard let pid = session.cliPid, pid > 0 else { return nil }
 
@@ -415,6 +499,20 @@ struct TerminalActivator {
         return nil
     }
 
+    /// Whether the session's CLI process runs under the running app `bundleId`.
+    private static func cliDescends(from bundleId: String, session: SessionSnapshot) -> Bool {
+        guard let pid = session.cliPid, pid > 1,
+              let appPid = NSRunningApplication.runningApplications(withBundleIdentifier: bundleId)
+                .first?.processIdentifier else { return false }
+        var current = pid
+        for _ in 0..<32 {
+            if current == appPid { return true }
+            guard let ppid = parentPID(of: current), ppid > 1 else { return false }
+            current = ppid
+        }
+        return false
+    }
+
     private static func parentPID(of pid: pid_t) -> pid_t? {
         var info = proc_bsdinfo()
         let ret = proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &info, Int32(MemoryLayout<proc_bsdinfo>.size))
@@ -422,237 +520,85 @@ struct TerminalActivator {
         return pid_t(info.pbi_ppid)
     }
 
-    // MARK: - Ghostty (AppleScript: match by CWD + session ID in title)
+    // MARK: - Ghostty (AppleScript: match the terminal by tty)
 
-    private static func activateGhostty(
-        cwd: String?,
-        tty: String? = nil,
-        sessionId: String? = nil,
-        source: String = "claude",
-        tmuxPane: String? = nil,
-        tmuxEnv: String? = nil
-    ) {
-        guard let cwd = cwd, !cwd.isEmpty else { bringToFront("Ghostty"); return }
-        // Ensure app is running, unhidden, and brought to front (Space switching)
+    private static let ghosttyBundleId = "com.mitchellh.ghostty"
+
+    /// Ghostty exposes each terminal's `tty` to AppleScript (ghostty-org/ghostty#11922,
+    /// shipping in 1.4), so the session's tab or split is found exactly — no title or
+    /// cwd guessing, which could never tell two sessions in one repo apart.
+    private static func activateGhostty(session: SessionSnapshot) {
         guard let app = NSWorkspace.shared.runningApplications.first(where: {
-            $0.bundleIdentifier == "com.mitchellh.ghostty"
+            $0.bundleIdentifier == ghosttyBundleId
         }) else {
             bringToFront("Ghostty")
             return
         }
         if app.isHidden { app.unhide() }
         // Don't call app.activate() here — it triggers Ghostty's quick terminal.
-        // The AppleScript's `focus t; activate` below will activate after focusing
-        // the correct terminal window.
+        // The AppleScript's `focus` + `activate` below raise the right window.
 
-        // The remaining work (tmux key resolution + AppleScript construction +
-        // osascript dispatch) is the last subprocess-bound path that wasn't
-        // already off-main — match the rest of the activator and run it on a
-        // userInitiated background queue so a stuck `tmux display-message`
-        // can't freeze the UI. See #139.
+        // The click handed the island key focus, so macOS counts the user's intent as
+        // ours. Pass it on explicitly (cooperative activation, macOS 14+): without
+        // this, Ghostty comes up and then, a moment later, the system returns focus
+        // to the app the click took it from — the jump looks like it did nothing.
+        NSApp.yieldActivation(toApplicationWithBundleIdentifier: ghosttyBundleId)
+
+        // Off the main thread: resolving the tty may spawn `ps`. See #139.
         let scriptRunner = AppleScriptRunner.current
         DispatchQueue.global(qos: .userInitiated).async {
-        // Resolve tmux title prefix (most reliable for tmux sessions in Ghostty).
-        // Example Ghostty title often contains: "<session>:<winIdx>:<winName> - ..."
-        var tmuxKey = ""
-        var tmuxSession = ""
-        if let pane = tmuxPane?.trimmingCharacters(in: .whitespacesAndNewlines),
-           !pane.isEmpty,
-           let tmuxBin = findBinary("tmux") {
-            // Try full key first, fall back to session name only
-            let formats = [
-                "#{session_name}:#{window_index}:#{window_name}",
-                "#{session_name}",
-            ]
-            for fmt in formats {
-                if let data = runProcess(tmuxBin, args: ["display-message", "-p", "-t", pane, "-F", fmt], env: tmuxProcessEnv(tmuxEnv)),
-                   let result = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines),
-                   !result.isEmpty {
-                    if fmt.contains("window_index") {
-                        tmuxKey = result
-                        if let first = result.split(separator: ":").first { tmuxSession = String(first) }
-                    } else {
-                        tmuxSession = result
-                    }
-                    break
-                }
-            }
-        }
-
-        // Normalize CWD variants:
-        // - trim whitespace
-        // - strip trailing slashes (except "/")
-        // - include symlink-resolved path variant
-        func stripTrailingSlashes(_ path: String) -> String {
-            var p = path
-            while p.count > 1, p.hasSuffix("/") { p.removeLast() }
-            return p
-        }
-        let trimmedCwd = cwd.trimmingCharacters(in: .whitespacesAndNewlines)
-        let cwd1 = stripTrailingSlashes(trimmedCwd)
-        let cwd2 = stripTrailingSlashes(URL(fileURLWithPath: cwd1).resolvingSymlinksInPath().path)
-        let dirName = (cwd1 as NSString).lastPathComponent
-
-        let home = NSHomeDirectory()
-        let tildeCwd: String = {
-            if cwd1 == home { return "~" }
-            if cwd1.hasPrefix(home + "/") {
-                return "~" + String(cwd1.dropFirst(home.count))
-            }
-            return ""
-        }()
-
-        let escapedCwd1 = escapeAppleScript(cwd1)
-        let escapedCwd2 = escapeAppleScript(cwd2)
-        let escapedDir = escapeAppleScript(dirName)
-        let escapedTilde = escapeAppleScript(tildeCwd)
-        let escapedTmux = escapeAppleScript(tmuxKey)
-        let escapedTmuxSession = escapeAppleScript(tmuxSession)
-
-        // Match order:
-        // 1) tmux title prefix (when available)
-        // 2) session ID in title (disambiguates same-CWD sessions)
-        // 3) source keyword in title ("claude"/"codex"/...)
-        // 4) CWD match (working directory), then title-based fallback
-        let idFilter: String
-        if let sid = sessionId, !sid.isEmpty {
-            let escapedSid = escapeAppleScript(String(sid.prefix(8)))
-            idFilter = """
-                repeat with t in matches
-                    if name of t contains "\(escapedSid)" then
-                        focus t
-                        activate
-                        return
-                    end if
-                end repeat
-            """
-        } else {
-            idFilter = ""
-        }
-        let keyword = escapeAppleScript(source)
-        let script = """
-        tell application "Ghostty"
-            set allTerms to terminals
-
-            -- 1) tmux: match by tmux title prefix first (more robust than CWD in tmux)
-            set tmuxKey to "\(escapedTmux)"
-            set tmuxSession to "\(escapedTmuxSession)"
-
-            -- 1a) exact window key when available: "<session>:<winIdx>:<winName>"
-            if tmuxKey is not "" then
-                repeat with t in allTerms
-                    try
-                        if name of t contains tmuxKey then
-                            focus t
-                            activate
-                            return
-                        end if
-                    end try
-                end repeat
-            end if
-
-            -- 1b) tmuxcc-style fallback: title starts with "<session>:"
-            if tmuxSession is not "" then
-                repeat with t in allTerms
-                    try
-                        set tname to (name of t as text)
-                        if tname starts with (tmuxSession & ":") then
-                            focus t
-                            activate
-                            return
-                        end if
-                    end try
-                end repeat
-            end if
-
-            -- 2) TTY: Ghostty does not currently expose a `tty` property (only uuid,
-            -- title, working directory). This block is kept for future-proofing and
-            -- silently skips via try if the property doesn't exist.
-            \(tty.map { t in
-                let escaped = escapeAppleScript(t)
-                return """
-                if "\(escaped)" is not "" then
-                    try
-                        set ttyMatches to (every terminal whose tty is "\(escaped)")
-                        if (count of ttyMatches) > 0 then
-                            focus (item 1 of ttyMatches)
-                            activate
-                            return
-                        end if
-                    end try
-                end if
+            let focus = ghosttyTty(for: session).map { tty in
                 """
-            } ?? "")
-
-            -- 3) CWD: exact match on Ghostty's working directory property
-            set matches to {}
-            set cwd1 to "\(escapedCwd1)"
-            set cwd2 to "\(escapedCwd2)"
-            if cwd1 is not "" then
                 try
-                    set matches to (every terminal whose working directory is cwd1)
+                    focus (first terminal whose tty is "\(escapeAppleScript(tty))")
                 end try
-            end if
-            if (count of matches) = 0 and cwd2 is not "" and cwd2 is not cwd1 then
-                try
-                    set matches to (every terminal whose working directory is cwd2)
-                end try
-            end if
+                """
+            } ?? ""
+            let script = """
+            tell application "Ghostty"
+                \(focus)
+                activate
+            end tell
+            \(ghosttyRaiseScript)
+            """
+            // Out of process like every other activation script (see AppleScriptRunner).
+            scriptRunner.launch(script)
+        }
+    }
 
-            -- 4) Fallback: match by title when Ghostty can't report the true working directory (common in tmux)
-            if (count of matches) = 0 then
-                set dirName to "\(escapedDir)"
-                set tildeCwd to "\(escapedTilde)"
-                repeat with t in allTerms
+    /// The tty Ghostty knows the session's terminal by. Under tmux that's the attached
+    /// client's tty (the CLI's own is an inner tmux pane; nil when detached). Otherwise
+    /// it's read from the live CLI process — Claude Code runs hooks without a
+    /// controlling terminal, so the captured `_tty` is often missing.
+    static func ghosttyTty(for session: SessionSnapshot) -> String? {
+        if let pane = session.tmuxPane, !pane.isEmpty {
+            return session.tmuxClientTty.flatMap { $0.isEmpty ? nil : $0 }
+        }
+        if let pid = session.cliPid, let tty = ProcessRunner.ttyForPid(pid) { return tty }
+        return session.ttyPath.flatMap { $0.isEmpty ? nil : $0 }
+    }
+
+    /// Final fallback via System Events: Ghostty's own `focus`/`activate` is unreliable
+    /// in some versions (issue #84), and even when it brings the app to front it doesn't
+    /// deminiaturize a window that's currently minimized to the dock. System Events
+    /// Accessibility API forces both. Wrapped in `try` so it silently no-ops if the
+    /// user hasn't granted Accessibility permission.
+    private static let ghosttyRaiseScript = """
+    try
+        tell application "System Events"
+            tell process "Ghostty"
+                set frontmost to true
+                repeat with w in windows
                     try
-                        set tname to (name of t as text)
-                        if (tildeCwd is not "" and tname contains tildeCwd) or (cwd1 is not "" and tname contains cwd1) or (dirName is not "" and tname contains dirName) then
-                            set end of matches to t
+                        if value of attribute "AXMinimized" of w is true then
+                            set value of attribute "AXMinimized" of w to false
                         end if
                     end try
                 end repeat
-            end if
-
-            \(idFilter)
-            repeat with t in matches
-                if name of t contains "\(keyword)" then
-                    focus t
-                    activate
-                    return
-                end if
-            end repeat
-            if (count of matches) > 0 then
-                focus (item 1 of matches)
-            end if
-            activate
-        end tell
-
-        -- Final fallback via System Events: Ghostty's own `focus`/`activate` is unreliable
-        -- in some versions (issue #84), and even when it brings the app to front it doesn't
-        -- deminiaturize a window that's currently minimized to the dock. System Events
-        -- Accessibility API forces both. Wrapped in `try` so it silently no-ops if the
-        -- user hasn't granted Accessibility permission.
-        try
-            tell application "System Events"
-                tell process "Ghostty"
-                    set frontmost to true
-                    repeat with w in windows
-                        try
-                            if value of attribute "AXMinimized" of w is true then
-                                set value of attribute "AXMinimized" of w to false
-                            end if
-                        end try
-                    end repeat
-                end tell
             end tell
-        end try
-        """
-        // Out of process like every other activation script (see AppleScriptRunner).
-        // Already on a background queue (see DispatchQueue.global wrap above), so
-        // launch directly instead of paying runAppleScript's extra dispatch hop.
-        scriptRunner.launch(script)
-        } // end DispatchQueue.global async
-    }
+        end tell
+    end try
+    """
 
     // MARK: - iTerm2 (AppleScript: match by session ID, tty, or cwd)
 

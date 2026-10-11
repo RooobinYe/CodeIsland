@@ -12,7 +12,7 @@ import CodeIslandCore
 ///
 /// Supported tab-level detection:
 /// - iTerm2: session ID match
-/// - Ghostty: CWD match via System Events window title
+/// - Ghostty: tty of the focused terminal (AppleScript)
 /// - Terminal.app: TTY match on selected tab
 /// - WezTerm: CLI pane query by TTY/CWD
 /// - Kaku: same shape as WezTerm (it's a fork)
@@ -297,23 +297,15 @@ struct TerminalVisibilityDetector {
 
     // MARK: - Ghostty
 
-    /// Check if Ghostty's front window matches this session's CWD.
-    /// Uses System Events to read the front window title (Ghostty's native scripting
-    /// doesn't expose a "focused terminal" property).
+    /// Check if the terminal focused in Ghostty's front window is this session's,
+    /// by tty (see TerminalActivator.activateGhostty).
     private static func isGhosttyTabActive(_ session: SessionSnapshot) -> Bool {
-        guard let cwd = session.cwd, !cwd.isEmpty else { return false }
-        let dirName = escapeAppleScript((cwd as NSString).lastPathComponent)
-        // Also require the session's source keyword in the title to reduce false positives
-        // when multiple CLI tools run in the same project directory
-        let sourceKeyword = escapeAppleScript(session.source)
+        guard let tty = TerminalActivator.ghosttyTty(for: session) else { return false }
         let script = """
-        tell application "System Events"
-            tell process "Ghostty"
-                try
-                    set winTitle to name of front window
-                    if winTitle contains "\(dirName)" and winTitle contains "\(sourceKeyword)" then return "true"
-                end try
-            end tell
+        tell application "Ghostty"
+            try
+                if tty of focused terminal of selected tab of front window is "\(escapeAppleScript(tty))" then return "true"
+            end try
         end tell
         return "false"
         """

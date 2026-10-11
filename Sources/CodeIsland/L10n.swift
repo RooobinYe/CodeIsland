@@ -413,7 +413,6 @@ final class L10n: ObservableObject {
         "enable_sound_tooltip": "Enable Sound",
         "settings": "Settings",
         "deny": "DENY",
-        "open_path": "Open",
         "copy_session_id": "Copy session ID",
 
         // Cursor external question wait (#265)
@@ -805,7 +804,6 @@ final class L10n: ObservableObject {
         "enable_sound_tooltip": "Ton aktivieren",
         "settings": "Einstellungen",
         "deny": "ABLEHNEN",
-        "open_path": "Öffnen",
         "copy_session_id": "Sitzungs-ID kopieren",
 
         // Cursor external question wait (#265)
@@ -1197,7 +1195,6 @@ final class L10n: ObservableObject {
         "enable_sound_tooltip": "开启音效",
         "settings": "设置",
         "deny": "拒绝",
-        "open_path": "打开",
         "copy_session_id": "复制会话 ID",
 
         // Cursor external question wait (#265)
@@ -1589,7 +1586,6 @@ final class L10n: ObservableObject {
         "enable_sound_tooltip": "開啟音效",
         "settings": "設定",
         "deny": "拒絕",
-        "open_path": "開啟",
         "copy_session_id": "複製會話 ID",
 
         // Cursor external question wait (#265)
@@ -1981,7 +1977,6 @@ final class L10n: ObservableObject {
         "enable_sound_tooltip": "サウンドを有効化",
         "settings": "設定",
         "deny": "拒否",
-        "open_path": "開く",
         "copy_session_id": "セッション ID をコピー",
 
         // Cursor external question wait (#265)
@@ -2373,7 +2368,6 @@ final class L10n: ObservableObject {
         "enable_sound_tooltip": "사운드 켜기",
         "settings": "설정",
         "deny": "거부",
-        "open_path": "열기",
         "copy_session_id": "세션 ID 복사",
 
         // Cursor external question wait (#265)
@@ -2765,7 +2759,6 @@ final class L10n: ObservableObject {
         "enable_sound_tooltip": "Sesi Etkinleştir",
         "settings": "Ayarlar",
         "deny": "REDDET",
-        "open_path": "Aç",
         "copy_session_id": "Oturum ID Kopyala",
 
         // Cursor external question wait (#265)

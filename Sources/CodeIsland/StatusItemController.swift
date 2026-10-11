@@ -38,9 +38,24 @@ final class StatusItemController: NSObject {
                 button.image = Self.menuBarIcon()
                 button.imageScaling = .scaleProportionallyDown
                 button.toolTip = "CodeIsland"
+                // Left click toggles the session list; right click opens the menu.
+                button.target = self
+                button.action = #selector(statusItemClicked)
+                button.sendAction(on: [.leftMouseUp, .rightMouseUp])
             }
-            item.menu = menu
             statusItem = item
+        }
+    }
+
+    @objc private func statusItemClicked() {
+        guard let item = statusItem, let event = NSApp.currentEvent else { return }
+        if event.type == .rightMouseUp || event.modifierFlags.contains(.control) {
+            // Attach only for this click so the next left click reaches the action.
+            item.menu = menu
+            item.button?.performClick(nil)
+            item.menu = nil
+        } else {
+            (NSApp.delegate as? AppDelegate)?.appState.toggleSessionList()
         }
     }
 

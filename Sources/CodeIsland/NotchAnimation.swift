@@ -9,35 +9,32 @@ enum NotchAnimation {
     static var close: Animation {
         .spring(response: NotchAnimationMetrics.closeResponse, dampingFraction: 1.0)
     }
-    /// 通知弹出：快速弹跳，用于 completion/approval 自动展开
-    static let pop = Animation.spring(response: 0.3, dampingFraction: 0.65)
+    /// 通知弹出：比 open 更利落、带一点回弹，用于 completion/approval 自动展开
+    static var pop: Animation {
+        .spring(response: NotchAnimationMetrics.popResponse, dampingFraction: 0.74)
+    }
     /// 微交互：hover 状态变化、按钮高亮等
     static let micro = Animation.easeOut(duration: 0.12)
     /// Hover 预备段：全量展开的延迟计时期间，先给一个轻量的"我看到你了"反馈
     static let hoverPrehover = Animation.easeOut(duration: NotchHoverInteraction.prehoverAnimationDuration)
 }
 
-// MARK: - Blur + Fade transition
-
-private struct BlurFadeModifier: ViewModifier {
-    let active: Bool
-    func body(content: Content) -> some View {
-        // No compositingGroup here: macOS 26 renders compositingGroup + blur
-        // (even with radius 0 in the identity state) transparent until a forced
-        // re-composition, which made the approval card invisible except on hover
-        // (issue #100).
-        content
-            .blur(radius: active ? 5 : 0)
-            .opacity(active ? 0 : 1)
-    }
-}
+// MARK: - Expanded content transition
 
 extension AnyTransition {
-    /// Blur out + fade — smoother than plain opacity for notch content switches.
-    static var blurFade: AnyTransition {
-        .modifier(
-            active: BlurFadeModifier(active: true),
-            identity: BlurFadeModifier(active: false)
+    /// The expanded content stays put while the island's shape grows over it
+    /// and fades in a beat behind the shape; on close it fades out before the
+    /// shape has shrunk around it. Nothing slides: a list travelling its full
+    /// height turned any frame the main thread missed into a visible jump.
+    static var islandContent: AnyTransition {
+        .asymmetric(
+            insertion: .opacity.combined(with: .offset(y: -6)).animation(
+                .easeOut(duration: NotchAnimationMetrics.scaled(NotchAnimationMetrics.baseContentFadeIn))
+                    .delay(NotchAnimationMetrics.scaled(NotchAnimationMetrics.baseContentFadeInDelay))
+            ),
+            removal: .opacity.animation(
+                .easeOut(duration: NotchAnimationMetrics.scaled(NotchAnimationMetrics.baseContentFadeOut))
+            )
         )
     }
 }

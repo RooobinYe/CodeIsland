@@ -4,12 +4,12 @@ import XCTest
 @testable import CodeIsland
 import CodeIslandCore
 
-/// The collapsed bar's right wing — quiet-hours moon, completion dot, question
-/// badge, session count — must stay clear of the notch. Its room was sized for
-/// the count and one badge; with tool status in simple mode nothing else pads
-/// it, so a waiting question's badge slid under the notch, and the completion
-/// dot beside it disappeared behind the notch altogether. A question the user
-/// dismissed (#352) keeps that badge up until it is answered in the terminal.
+/// The collapsed bar hangs off the notch's right, on notched and notchless
+/// screens alike. Its right wing — quiet-hours moon, completion dot, question
+/// badge, session count — must stay clear of the notch: a waiting question's
+/// badge once slid under it, and the completion dot beside it disappeared
+/// behind it altogether. A question the user dismissed (#352) keeps that badge
+/// up until it is answered in the terminal.
 @MainActor
 final class CollapsedRightWingLayoutTests: XCTestCase {
     private let suiteName = "CollapsedRightWingLayoutTests"
@@ -38,15 +38,13 @@ final class CollapsedRightWingLayoutTests: XCTestCase {
         try await super.tearDown()
     }
 
-    func testRightWingMissingWidthIsOnlyWhatItLacks() {
-        // Room: 41 + 20/2 = 51. A count and one badge fit with notch clearance.
-        XCTAssertEqual(CompactRightWingLayout.missing(contentWidth: 46, wing: 41, statusExtra: 20, hasNotch: true), 0)
-        // Badge + dot + count: 66 + 4 clearance − 51 = 19 short.
-        XCTAssertEqual(CompactRightWingLayout.missing(contentWidth: 66, wing: 41, statusExtra: 20, hasNotch: true), 19, accuracy: 0.001)
-        // No notch to clear: the right wing sits past a flexible centre.
-        XCTAssertEqual(CompactRightWingLayout.missing(contentWidth: 66, wing: 41, statusExtra: 20, hasNotch: false), 0)
+    func testRightWingRoomIsItsContentOrTheMinimum() {
+        // A count and one badge fit the minimum with notch clearance.
+        XCTAssertEqual(CompactRightWingLayout.room(contentWidth: 46, minimum: 51), 51)
+        // Badge + dot + count: 66 + 4 clearance.
+        XCTAssertEqual(CompactRightWingLayout.room(contentWidth: 66, minimum: 51), 70, accuracy: 0.001)
         // Not measured yet.
-        XCTAssertEqual(CompactRightWingLayout.missing(contentWidth: 0, wing: 41, statusExtra: 20, hasNotch: true), 0)
+        XCTAssertEqual(CompactRightWingLayout.room(contentWidth: 0, minimum: 40), 40)
     }
 
     func testQuestionBadgeAndCompletionDotStayClearOfTheNotch() async throws {
@@ -56,30 +54,33 @@ final class CollapsedRightWingLayoutTests: XCTestCase {
             let name = "glance=\(glance)"
             XCTAssertNil(g.intrusion, "\(name): the right wing draws under the notch at \(g.intrusion ?? 0)pt")
             XCTAssertLessThanOrEqual(g.barRight, 620, "\(name): the bar runs past the panel window")
-            XCTAssertGreaterThanOrEqual(g.barLeft, 0, "\(name): the bar runs past the panel window")
+            // However wide the wing grows, the left end stays a lip past the notch.
+            XCTAssertEqual(g.barLeft, notchLeft - CompactRightWingLayout.leadingLip + 1, accuracy: 1, name)
         }
     }
 
-    func testRightWingThatFitsLeavesTheBarAlone() async throws {
-        // Tool status in detailed mode pads both wings: the badge and dot fit,
-        // and the bar must stay exactly where it was.
-        suite.set(true, forKey: SettingsKey.showToolStatus)
-        let state = try await collapsedState(glance: true)
-        let g = try renderedGeometry(state)
-        XCTAssertNil(g.intrusion)
-        // Centred on the notch: base bar = notch + 2 × 41 + 20 + 3% of 1512.
-        // The panel shape is drawn about a point inside its frame.
-        let base = notch + 82 + 20 + 1512 * 0.03
-        XCTAssertEqual(g.barRight, (620 + base) / 2 - 1, accuracy: 1)
-        XCTAssertEqual(g.barLeft, (620 - base) / 2 + 1, accuracy: 1)
+    func testCollapsedBarHangsOffTheNotchRightOnEveryScreen() async throws {
+        for hasNotch in [true, false] {
+            let state = AppState()
+            var session = SessionSnapshot()
+            session.source = "claude"
+            state.sessions = ["s1": session]
+            state.refreshDerivedState()
+            let g = try renderedGeometry(state, hasNotch: hasNotch)
+            let name = "hasNotch=\(hasNotch)"
+            // Lip left of the notch; the minimum wing (min(27, 32 − 6) + 14) right of it.
+            // The panel shape is drawn about a point inside its frame.
+            XCTAssertEqual(g.barLeft, notchLeft - CompactRightWingLayout.leadingLip + 1, accuracy: 1, name)
+            XCTAssertEqual(g.barRight, notchRight + 40 - 1, accuracy: 1, name)
+        }
     }
 
     // MARK: - Fixture
 
+    private var notchLeft: CGFloat { (620 - notch) / 2 }
+    private var notchRight: CGFloat { (620 + notch) / 2 }
+
     private func collapsedState(glance: Bool) async throws -> AppState {
-        if suite.object(forKey: SettingsKey.showToolStatus) == nil {
-            suite.set(false, forKey: SettingsKey.showToolStatus)
-        }
         let state = AppState()
         var session = SessionSnapshot()
         session.source = "claude"
@@ -109,9 +110,9 @@ final class CollapsedRightWingLayoutTests: XCTestCase {
 
     /// The real panel on a red backdrop: the bar's ends, and the first column
     /// under the physical notch where anything but the bar's black is drawn.
-    private func renderedGeometry(_ state: AppState) throws -> (barLeft: CGFloat, barRight: CGFloat, intrusion: CGFloat?) {
+    private func renderedGeometry(_ state: AppState, hasNotch: Bool = true) throws -> (barLeft: CGFloat, barRight: CGFloat, intrusion: CGFloat?) {
         let windowWidth: CGFloat = 620, height: CGFloat = 64, notchHeight: CGFloat = 32
-        let view = NotchPanelView(appState: state, hasNotch: true, notchHeight: notchHeight, notchW: notch, screenWidth: 1512)
+        let view = NotchPanelView(appState: state, hasNotch: hasNotch, notchHeight: notchHeight, notchW: notch, screenWidth: 1512)
             .defaultAppStorage(suite)
             .background(Color(red: 1, green: 0, blue: 0))
         let host = NSHostingView(rootView: view)

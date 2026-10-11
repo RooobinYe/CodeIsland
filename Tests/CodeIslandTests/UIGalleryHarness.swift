@@ -215,9 +215,8 @@ final class UIGalleryHarness: XCTestCase {
 // MARK: - Settings sandbox
 
 /// Panel settings for one render: the standard defaults (sandboxed by the
-/// harness) for views that read them directly — the scrolling session list
-/// hosts its cards in a nested NSHostingView that does not inherit
-/// `defaultAppStorage` — and a private suite for everything else.
+/// harness) for code that reads them directly rather than through
+/// `defaultAppStorage`, and a private suite for everything else.
 @MainActor
 enum GallerySettings {
     static let suiteName = "CodeIsland.UIGalleryHarness"

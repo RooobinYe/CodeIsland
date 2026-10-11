@@ -40,6 +40,18 @@ for arg in "$@"; do
     esac
 done
 
+# Swift Build (the default `swift build` backend since Swift 6.4) records the
+# deployment target as the binary's SDK version. AppKit reads that version to
+# pick its look, so a binary stamped "SDK 14.0" gets the legacy split view with
+# a black divider instead of the Liquid Glass sidebar. Stamp the real SDK.
+stamp_sdk_version() {
+    local binary="$1"
+    local sdk_version
+    sdk_version="$(xcrun --sdk macosx --show-sdk-version)"
+    xcrun vtool -set-build-version macos 14.0 "$sdk_version" -replace -output "$binary.stamped" "$binary"
+    mv "$binary.stamped" "$binary"
+}
+
 build_mac() {
     echo "Building $APP_NAME (arm64 only)..."
     swift build -c release --arch arm64
@@ -54,6 +66,7 @@ build_mac() {
 
     cp "$ARM_DIR/$APP_NAME" "$APP_BUNDLE/Contents/MacOS/$APP_NAME"
     cp "$ARM_DIR/codeisland-bridge" "$APP_BUNDLE/Contents/Helpers/codeisland-bridge"
+    stamp_sdk_version "$APP_BUNDLE/Contents/MacOS/$APP_NAME"
     cp Info.plist "$APP_BUNDLE/Contents/Info.plist"
 
     echo "Compiling app icon assets..."

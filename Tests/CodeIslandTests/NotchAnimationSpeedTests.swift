@@ -53,6 +53,14 @@ final class NotchAnimationSpeedTests: XCTestCase {
 
         XCTAssertEqual(NotchAnimationMetrics.openResponse, 0.21, accuracy: 0.0001)
         XCTAssertEqual(NotchAnimationMetrics.closeResponse, 0.19, accuracy: 0.0001)
+        XCTAssertEqual(NotchAnimationMetrics.popResponse, 0.18, accuracy: 0.0001)
+    }
+
+    func testStoredSpeedScalesTheContentFades() {
+        UserDefaults.standard.set(0.5, forKey: SettingsKey.notchAnimationSpeed)
+
+        XCTAssertEqual(NotchAnimationMetrics.scaled(NotchAnimationMetrics.baseContentFadeIn), 0.44, accuracy: 0.0001)
+        XCTAssertEqual(NotchAnimationMetrics.scaled(NotchAnimationMetrics.baseContentFadeOut), 0.2, accuracy: 0.0001)
     }
 
     func testMissingStoredSpeedUsesNormalResponses() {
@@ -60,5 +68,6 @@ final class NotchAnimationSpeedTests: XCTestCase {
 
         XCTAssertEqual(NotchAnimationMetrics.openResponse, 0.42, accuracy: 0.0001)
         XCTAssertEqual(NotchAnimationMetrics.closeResponse, 0.38, accuracy: 0.0001)
+        XCTAssertEqual(NotchAnimationMetrics.popResponse, 0.36, accuracy: 0.0001)
     }
 }

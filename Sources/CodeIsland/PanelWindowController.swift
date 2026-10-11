@@ -216,6 +216,7 @@ class PanelWindowController: NSObject, NSWindowDelegate {
         withObservationTracking {
             _ = appState.sessions
             _ = appState.surface
+            _ = appState.isSummoned
         } onChange: { [weak self] in
             Task { @MainActor in
                 guard let self else { return }
@@ -635,7 +636,7 @@ class PanelWindowController: NSObject, NSWindowDelegate {
             return
         }
 
-        if settings.hideWhenNoSession && appState.activeSessionCount == 0 {
+        if appState.isAutoHidden(hideWhenNoSession: settings.hideWhenNoSession) {
             panel.orderOut(nil)
             return
         }

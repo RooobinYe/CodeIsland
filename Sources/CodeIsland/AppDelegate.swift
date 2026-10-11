@@ -192,17 +192,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private func executeShortcut(_ action: ShortcutAction) {
         switch action {
         case .togglePanel:
-            if appState.surface.isExpanded {
-                withAnimation(NotchAnimation.close) { appState.surface = .collapsed }
-            } else {
-                withAnimation(NotchAnimation.open) {
-                    appState.surface = .sessionList
-                    appState.cancelCompletionQueue()
-                    if appState.activeSessionId == nil {
-                        appState.activeSessionId = appState.sessions.keys.sorted().first
-                    }
-                }
-            }
+            appState.toggleSessionList()
         case .jumpToTerminal:
             if let id = appState.activeSessionId, let session = appState.sessions[id] {
                 TerminalActivator.activate(session: session, sessionId: id)

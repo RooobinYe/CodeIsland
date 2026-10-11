@@ -240,7 +240,7 @@ struct DefaultsSandbox {
     static var panelKeys: [String] {
         [
             SettingsKey.appLanguage, SettingsKey.contentFontSize, SettingsKey.showAgentDetails,
-            SettingsKey.smartSuppress, SettingsKey.hideWhenNoSession, SettingsKey.showToolStatus,
+            SettingsKey.smartSuppress, SettingsKey.hideWhenNoSession,
             SettingsKey.collapsedWidthScale, SettingsKey.hapticOnHover, SettingsKey.hapticIntensity,
             SettingsKey.soundEnabled,
             SettingsKey.quietHoursEnabled, SettingsKey.quietHoursStart, SettingsKey.quietHoursEnd,

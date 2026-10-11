@@ -10,13 +10,11 @@ enum NotchWidthScale {
 }
 
 enum NotchWidthMetrics {
-    /// On notched displays the island can grow beyond the physical notch but never
-    /// shrink under it — narrower would expose the bare hardware cutout (#268).
-    static func effectiveNotchWidth(notchW: CGFloat, collapsedWidthScale: Int, hasNotch: Bool) -> CGFloat {
+    /// Applies on notched displays too: below 100% the wings move in over the
+    /// physical notch, so the visible island narrows.
+    static func effectiveNotchWidth(notchW: CGFloat, collapsedWidthScale: Int) -> CGFloat {
         let clampedScale = Swift.max(NotchWidthScale.min, Swift.min(collapsedWidthScale, NotchWidthScale.max))
-        let scaled = notchW * CGFloat(clampedScale) / 100.0
-        if hasNotch { return Swift.max(notchW, scaled) }
-        return scaled
+        return notchW * CGFloat(clampedScale) / 100.0
     }
 }
 
@@ -78,7 +76,6 @@ enum NotchHoverInteraction {
 
 enum ToolNameDisplay {
     static let compactMaxCharacters = 24
-    static let compactMaxWidth: CGFloat = 120
 
     static func compact(_ tool: String, maxCharacters: Int = compactMaxCharacters) -> String {
         let trimmed = tool.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -110,7 +107,6 @@ struct NotchPanelView: View {
     @AppStorage(SettingsKey.showAgentDetails) private var showAgentDetails = SettingsDefaults.showAgentDetails
     @AppStorage(SettingsKey.smartSuppress) private var smartSuppress = SettingsDefaults.smartSuppress
     @AppStorage(SettingsKey.hideWhenNoSession) private var hideWhenNoSession = SettingsDefaults.hideWhenNoSession
-    @AppStorage(SettingsKey.showToolStatus) private var showToolStatus = SettingsDefaults.showToolStatus
     @AppStorage(SettingsKey.collapsedWidthScale) private var collapsedWidthScale = SettingsDefaults.collapsedWidthScale
     @AppStorage(SettingsKey.hapticOnHover) private var hapticOnHover = SettingsDefaults.hapticOnHover
     @AppStorage(SettingsKey.hapticIntensity) private var hapticIntensity = SettingsDefaults.hapticIntensity
@@ -124,14 +120,15 @@ struct NotchPanelView: View {
     @State private var idleHovered = false
     /// Three-stage hover: collapsed → prehover (immediate ack) → expanded (after delay)
     @State private var hoverPhase: NotchHoverPhase = .collapsed
-    /// Curtain animation for tool status toggle
-    @State private var curtainOffset: CGFloat = 0
-    @State private var curtainOpacity: Double = 1
-    @State private var displayedToolStatus: Bool = SettingsDefaults.showToolStatus
     /// Window height and card chrome for the completion card's reply area.
     @State private var cardSpace = CompletionCardSpace()
     /// Measured width of the collapsed right wing (0 until first laid out).
     @State private var rightWingWidth: CGFloat = 0
+    /// The session list's natural height, kept while the island is collapsed:
+    /// the list is rebuilt on every open, and starting it from 0 laid it out
+    /// unscrolled first, then again inside the scroll view a frame later —
+    /// twice the work, and a target height that moved mid-animation.
+    @State private var listContentHeight: CGFloat = 0
 
     private var isActive: Bool { !appState.sessions.isEmpty }
     /// First launch / no-session state should still render a visible marker so the app
@@ -141,10 +138,15 @@ struct NotchPanelView: View {
     }
     /// Whether the bar content should be visible (respects hideWhenNoSession)
     private var showBar: Bool {
-        isActive && !(hideWhenNoSession && appState.activeSessionCount == 0)
+        isActive && !appState.hidesCollapsedBar(hideWhenNoSession: hideWhenNoSession)
     }
     private var shouldShowExpanded: Bool {
         showBar && appState.surface.isExpanded
+    }
+    /// Neither bar nor idle indicator: the island is the notch itself — what a
+    /// hidden island closes into before its window goes away.
+    private var isNotchShell: Bool {
+        !showBar && !showIdleIndicator
     }
     /// Prehover acknowledgement is only rendered on the collapsed active bar —
     /// once the surface expands (from hover or any other path) it disappears.
@@ -164,54 +166,45 @@ struct NotchPanelView: View {
     /// Mascot size — fits within the menu bar height
     private var mascotSize: CGFloat { min(27, notchHeight - 6) }
 
-    /// Minimum wing width needed to display compact bar content
+    /// Minimum width of the collapsed bar's right wing
     private var compactWingWidth: CGFloat { mascotSize + 14 }
 
-    /// Effective island width — on notched screens the scale can only widen past the notch.
+    /// Effective island width — the notch (physical or simulated) scaled by the setting.
     private var effectiveNotchW: CGFloat {
         NotchWidthMetrics.effectiveNotchWidth(
             notchW: notchW,
-            collapsedWidthScale: collapsedWidthScale,
-            hasNotch: hasNotch
+            collapsedWidthScale: collapsedWidthScale
         )
     }
 
     /// Total panel width — adapts based on state and screen geometry
     private var panelWidth: CGFloat {
         let nw = effectiveNotchW
-        if showIdleIndicator { return idleHovered ? nw + compactWingWidth * 2 + 80 : nw + compactWingWidth * 2 }
-        if !isActive { return hasNotch ? nw - 20 : nw }
+        let lip = CompactRightWingLayout.leadingLip
+        if showIdleIndicator { return lip + nw + (idleHovered ? compactWingWidth + 40 : compactWingWidth) }
+        if isNotchShell { return notchW }
         if shouldShowExpanded { return min(max(nw + 200, 580), maxPanelWidth) }
-        return collapsedBarWidth + rightWingReserve
-    }
-
-    /// Room the collapsed right wing lacks to clear the notch; 0 whenever it fits.
-    private var rightWingReserve: CGFloat {
-        guard showBar, !shouldShowExpanded else { return 0 }
-        return CompactRightWingLayout.missing(
-            contentWidth: rightWingWidth,
-            wing: compactWingWidth,
-            statusExtra: collapsedStatusExtra,
-            hasNotch: hasNotch
-        )
+        return lip + nw + collapsedRightRoom
     }
 
     /// The panel window's width (PanelWindowController.panelSize).
     private var maxPanelWidth: CGFloat { min(620, screenWidth - 40) }
 
-    /// The collapsed active bar, before any room for the right wing.
-    private var collapsedBarWidth: CGFloat {
+    /// The collapsed bar's right wing: its content clear of the notch, never
+    /// under the minimum wing (a little more while a session works).
+    private var collapsedRightRoom: CGFloat {
+        let working: CGFloat = appState.status == .idle ? 0 : 10
         // Immediate hover acknowledgement: a slight widen while the expand delay runs
         let prehoverExtra: CGFloat = shouldShowPrehover ? NotchHoverInteraction.prehoverWidthDelta : 0
-        return effectiveNotchW + compactWingWidth * 2 + collapsedStatusExtra + prehoverExtra
+        return CompactRightWingLayout.room(contentWidth: rightWingWidth, minimum: compactWingWidth + working)
+            + prehoverExtra
     }
 
-    /// Status and tool-status reserves, split evenly between the two wings.
-    private var collapsedStatusExtra: CGFloat {
-        let extra: CGFloat = appState.status == .idle ? 0 : 20
-        // Reserve space for tool status — proportional to screen width
-        let toolExtra: CGFloat = displayedToolStatus ? (hasNotch ? screenWidth * 0.03 : screenWidth * 0.04) : 0
-        return extra + toolExtra
+    /// Collapsed bars hang off the notch's right, so they shift right to keep
+    /// the (physical or simulated) notch centred; expanded stays centred.
+    private var barOffset: CGFloat {
+        guard (showBar && !shouldShowExpanded) || showIdleIndicator else { return 0 }
+        return (panelWidth - effectiveNotchW) / 2 - CompactRightWingLayout.leadingLip
     }
 
     var body: some View {
@@ -220,15 +213,15 @@ struct NotchPanelView: View {
                 if showBar {
                     // Active: compact bar — wider version when expanded
                     HStack(spacing: 0) {
-                        CompactLeftWing(appState: appState, expanded: shouldShowExpanded, hasNotch: hasNotch, showToolStatus: showToolStatus)
-                        if hasNotch && !shouldShowExpanded {
-                            Spacer(minLength: effectiveNotchW)
-                        } else if !shouldShowExpanded && showToolStatus {
-                            CompactToolStatus(appState: appState)
-                            Spacer(minLength: 0)
+                        if shouldShowExpanded {
+                            AppLogoView(size: 36, showBackground: false)
+                                .padding(.leading, 6)
                         } else {
-                            Spacer(minLength: 0)
+                            // Collapsed: nothing left of the notch but a lip.
+                            Color.clear
+                                .frame(width: CompactRightWingLayout.leadingLip + effectiveNotchW)
                         }
+                        Spacer(minLength: 0)
                         CompactRightWing(appState: appState, expanded: shouldShowExpanded, hasNotch: hasNotch)
                     }
                     .frame(height: notchHeight)
@@ -241,7 +234,6 @@ struct NotchPanelView: View {
                     .onPreferenceChange(CompactRightWingWidthKey.self) { if $0 > 0 { rightWingWidth = $0 } }
                 } else if showIdleIndicator {
                     IdleIndicatorBar(
-                        compactWingWidth: compactWingWidth,
                         notchW: effectiveNotchW,
                         notchHeight: notchHeight,
                         hasNotch: hasNotch,
@@ -259,51 +251,37 @@ struct NotchPanelView: View {
                         .stroke(.white.opacity(0.15), style: StrokeStyle(lineWidth: 0.5, dash: [4, 3]))
                         .frame(height: 0.5)
                         .padding(.horizontal, 12)
+                        .transition(.islandContent)
 
                     switch appState.surface {
                     case .completionCard:
-                        SessionListView(appState: appState, onlySessionId: appState.justCompletedSessionId)
-                            .transition(.blurFade.combined(with: .move(edge: .top)))
+                        // The card never scrolls: its height is not the list's.
+                        SessionListView(appState: appState, onlySessionId: appState.justCompletedSessionId,
+                                        contentHeight: .constant(0))
+                            .transition(.islandContent)
                     case .sessionList:
-                        SessionListView(appState: appState, onlySessionId: nil)
-                            .transition(.blurFade.combined(with: .move(edge: .top)))
+                        SessionListView(appState: appState, onlySessionId: nil,
+                                        contentHeight: $listContentHeight)
+                            .transition(.islandContent)
                     case .collapsed:
                         EmptyView()
                     }
                 }
             }
             .recordsCompletionCardChrome(in: cardSpace)
-            .frame(width: panelWidth)
+            // Explicit height whenever collapsed: a close then shrinks width and
+            // height on one spring, instead of the height trailing the width
+            // while the expanded content is still being removed.
+            .frame(width: panelWidth, height: shouldShowExpanded ? nil : notchHeight, alignment: .top)
             .clipped()
             .background(
                 NotchPanelShape(
-                    topExtension: shouldShowExpanded ? 14 : 3,
+                    topExtension: shouldShowExpanded ? 14 : (isNotchShell ? 0 : 3),
                     bottomRadius: shouldShowExpanded ? 24 : 12,
                     minHeight: notchHeight
                 )
                 .fill(.black)
             )
-            .offset(y: curtainOffset)
-            .opacity(curtainOpacity)
-            .onChange(of: showToolStatus) { _, newValue in
-                // Phase 1: entire bar slides up and fades out
-                withAnimation(.easeIn(duration: 0.2)) {
-                    curtainOffset = -notchHeight
-                    curtainOpacity = 0
-                }
-                // Phase 2: switch width while hidden
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
-                    displayedToolStatus = newValue
-                }
-                // Phase 3: entire bar slides back down
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
-                    withAnimation(.easeOut(duration: 0.25)) {
-                        curtainOffset = 0
-                        curtainOpacity = 1
-                    }
-                }
-            }
-            .onAppear { displayedToolStatus = showToolStatus }
             .scaleEffect(shouldShowPrehover ? NotchHoverInteraction.prehoverScale : 1, anchor: .top)
             .contentShape(Rectangle())
             .onHover { hovering in
@@ -387,8 +365,10 @@ struct NotchPanelView: View {
                                     performer.perform(.alignment, performanceTime: .default)
                                 }
                             }
-                            hoverPhase = NotchHoverInteraction.nextPhase(from: hoverPhase, event: .expandDelayElapsed)
+                            // One transaction: the prehover widen hands over to
+                            // the open spring instead of snapping back first.
                             withAnimation(NotchAnimation.open) {
+                                hoverPhase = NotchHoverInteraction.nextPhase(from: hoverPhase, event: .expandDelayElapsed)
                                 appState.surface = .sessionList
                                 appState.cancelCompletionQueue()
                                 if appState.activeSessionId == nil {
@@ -408,8 +388,8 @@ struct NotchPanelView: View {
                     hoverTimer = Timer.scheduledTimer(withTimeInterval: NotchHoverInteraction.collapseDelay, repeats: false) { _ in
                         Task { @MainActor in
                             guard !isHovered else { return }
-                            hoverPhase = NotchHoverInteraction.nextPhase(from: hoverPhase, event: .collapseDelayElapsed)
                             withAnimation(NotchAnimation.close) {
+                                hoverPhase = NotchHoverInteraction.nextPhase(from: hoverPhase, event: .collapseDelayElapsed)
                                 appState.surface = .collapsed
                             }
                         }
@@ -426,7 +406,7 @@ struct NotchPanelView: View {
                 }
             }
             // Outside onHover on purpose: the hover region moves with the bar.
-            .offset(x: rightWingReserve / 2)
+            .offset(x: barOffset)
 
             Spacer()
                 .allowsHitTesting(false)
@@ -440,68 +420,13 @@ struct NotchPanelView: View {
         // clamped to the screen.
         .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { cardSpace.recordWindowHeight($0) }
         .environment(cardSpace)
-        .animation(NotchAnimation.open, value: appState.surface)
+        // No `.animation(_:value: surface)` here: an implicit animation wins
+        // over `withAnimation`, which turned every close and every pop into
+        // the open spring. Each change of surface brings its own.
     }
 }
 
 // MARK: - Compact Wings (notch-level, 32px height)
-
-/// Left side: pixel character + status info
-private struct CompactLeftWing: View {
-    var appState: AppState
-    let expanded: Bool
-    let hasNotch: Bool
-    let showToolStatus: Bool
-
-    private var displaySession: SessionSnapshot? {
-        let sid = appState.rotatingSessionId ?? appState.activeSessionId ?? appState.sessions.keys.sorted().first
-        guard let sid else { return nil }
-        return appState.sessions[sid]
-    }
-    private var liveTool: String? { displaySession?.currentTool }
-    @State private var shownTool: String?
-    @State private var lingerTimer: Timer?
-
-    var body: some View {
-        HStack(spacing: 6) {
-            if expanded {
-                AppLogoView(size: 36, showBackground: false)
-            } else {
-                // On notch screens, show tool name only (no description, space is tight)
-                if hasNotch, showToolStatus, let tool = shownTool {
-                    Text(ToolNameDisplay.compact(tool))
-                        .font(.system(size: 10, weight: .medium, design: .monospaced))
-                        .foregroundStyle(toolStatusColor(tool))
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                        .frame(maxWidth: ToolNameDisplay.compactMaxWidth, alignment: .leading)
-                        .transition(.opacity)
-                        .help(tool)
-                }
-            }
-        }
-        .padding(.leading, 6)
-        .clipped()
-        .onChange(of: liveTool) { _, newTool in
-            lingerTimer?.invalidate()
-            if let newTool {
-                withAnimation(.easeInOut(duration: 0.2)) { shownTool = newTool }
-            } else {
-                lingerTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: false) { _ in
-                    DispatchQueue.main.async {
-                        withAnimation(.easeOut(duration: 0.3)) { shownTool = nil }
-                    }
-                }
-            }
-        }
-        // Session rotation: immediately sync tool to avoid stale linger from previous session
-        .onChange(of: appState.rotatingSessionId) { _, _ in
-            lingerTimer?.invalidate()
-            let newTool = liveTool
-            withAnimation(.easeInOut(duration: 0.2)) { shownTool = newTool }
-        }
-    }
-}
 
 /// Right side: project name + session count (detailed) or just count (simple)
 private struct CompactRightWing: View {
@@ -510,7 +435,6 @@ private struct CompactRightWing: View {
     let hasNotch: Bool
     @ObservedObject private var l10n = L10n.shared
     @AppStorage(SettingsKey.soundEnabled) private var soundEnabled = SettingsDefaults.soundEnabled
-    @AppStorage(SettingsKey.showToolStatus) private var showToolStatus = SettingsDefaults.showToolStatus
     @AppStorage(SettingsKey.quietHoursEnabled) private var quietHoursEnabled = SettingsDefaults.quietHoursEnabled
     @AppStorage(SettingsKey.quietHoursStart) private var quietHoursStart = SettingsDefaults.quietHoursStart
     @AppStorage(SettingsKey.quietHoursEnd) private var quietHoursEnd = SettingsDefaults.quietHoursEnd
@@ -577,37 +501,20 @@ private struct CompactRightWing: View {
                         .symbolEffect(.pulse, options: .repeating, isActive: !reduceMotion)
                 }
 
-                if showToolStatus {
-                    // Detailed mode: session count (project name is shown in center on non-notch)
-                    HStack(spacing: 1) {
-                        let active = appState.activeSessionCount
-                        let total = appState.totalSessionCount
-                        if active > 0 {
-                            Text("\(active)")
-                                .foregroundStyle(Color(red: 0.4, green: 1.0, blue: 0.5))
-                            Text("/")
-                                .foregroundStyle(.white.opacity(0.5))
-                        }
-                        Text("\(total)")
-                            .foregroundStyle(.white.opacity(0.9))
+                // Session count: active / total
+                HStack(spacing: 1) {
+                    let active = appState.activeSessionCount
+                    let total = appState.totalSessionCount
+                    if active > 0 {
+                        Text("\(active)")
+                            .foregroundStyle(Color(red: 0.4, green: 1.0, blue: 0.5))
+                        Text("/")
+                            .foregroundStyle(.white.opacity(0.5))
                     }
-                    .font(.system(size: 12, weight: .semibold, design: .monospaced))
-                } else {
-                    // Simple mode: original session count only
-                    HStack(spacing: 1) {
-                        let active = appState.activeSessionCount
-                        let total = appState.totalSessionCount
-                        if active > 0 {
-                            Text("\(active)")
-                                .foregroundStyle(Color(red: 0.4, green: 1.0, blue: 0.5))
-                            Text("/")
-                                .foregroundStyle(.white.opacity(0.5))
-                        }
-                        Text("\(total)")
-                            .foregroundStyle(.white.opacity(0.9))
-                    }
-                    .font(.system(size: 13, weight: .bold, design: .monospaced))
+                    Text("\(total)")
+                        .foregroundStyle(.white.opacity(0.9))
                 }
+                .font(.system(size: 13, weight: .bold, design: .monospaced))
             }
         }
         .padding(.trailing, 6)
@@ -617,196 +524,6 @@ private struct CompactRightWing: View {
         .background(GeometryReader { geo in
             Color.clear.preference(key: CompactRightWingWidthKey.self, value: expanded ? 0 : geo.size.width)
         })
-    }
-}
-
-// MARK: - Tool Status Helpers
-
-/// Accent color for each tool category — shared between notch and non-notch views
-private func toolStatusColor(_ tool: String) -> Color {
-    switch tool.lowercased() {
-    case "bash", "running command": return Color(red: 0.4, green: 1.0, blue: 0.5)
-    case "edit", "write", "editing": return Color(red: 0.5, green: 0.7, blue: 1.0)
-    case "read", "reading": return Color(red: 0.9, green: 0.8, blue: 0.4)
-    case "grep", "glob", "searching", "calling mcp": return Color(red: 0.8, green: 0.6, blue: 1.0)
-    case "agent", "delegating": return Color(red: 1.0, green: 0.6, blue: 0.4)
-    case "compacting": return Color(red: 0.4, green: 0.85, blue: 0.9)
-    default: return .white.opacity(0.7)
-    }
-}
-
-enum SessionLiveOutputDisplay {
-    static func summary(for session: SessionSnapshot?, maxCharacters: Int = 160) -> String? {
-        guard maxCharacters > 0,
-              let session,
-              session.status != .idle,
-              SessionSnapshot.normalizedSupportedSource(session.source) == "codex",
-              let liveOutput = session.liveCodexOutput else { return nil }
-
-        // Streamed replies are Markdown; flatten it so the one-line bar shows
-        // words, not `##`, `**` or table pipes. Cached: the bar re-renders
-        // far more often than the output changes.
-        let flattened = ChatMessageTextFormatter.markdownPreview(liveOutput, singleLine: true)
-        let normalized = String(flattened.characters)
-            .components(separatedBy: .whitespacesAndNewlines)
-            .filter { !$0.isEmpty }
-            .joined(separator: " ")
-        guard !normalized.isEmpty else { return nil }
-        guard normalized.count > maxCharacters else { return normalized }
-        if maxCharacters == 1 { return "\u{2026}" }
-        return String(normalized.prefix(maxCharacters - 1)) + "\u{2026}"
-    }
-}
-
-// MARK: - Compact Tool Status (non-notch center area)
-
-/// What the collapsed bar's centre leads with: the project folder, or the
-/// session title when "Show project name" is off. Capped in width — an
-/// AI-generated title runs to dozens of characters and would otherwise push
-/// the tool and its description out of the bar. A short label still hugs its
-/// text.
-struct CompactContextLabel: View {
-    let text: String
-
-    static let fontSize: CGFloat = 11
-    static let maxWidth: CGFloat = 120
-
-    /// The label's widest extent: its text's width, up to `maxWidth`.
-    static func width(for text: String) -> CGFloat {
-        let font = NSFont.monospacedSystemFont(ofSize: fontSize, weight: .medium)
-        // A point of slack: Text truncates a label measured to the exact width.
-        let ideal = (text as NSString).size(withAttributes: [.font: font]).width.rounded(.up) + 1
-        return min(ideal, maxWidth)
-    }
-
-    var body: some View {
-        Text(text)
-            .font(.system(size: Self.fontSize, weight: .medium, design: .monospaced))
-            .foregroundStyle(.white.opacity(0.8))
-            .lineLimit(1)
-            .truncationMode(.tail)
-            // minWidth 0 keeps it shrinkable when the bar is narrower still.
-            .frame(minWidth: 0, maxWidth: Self.width(for: text), alignment: .leading)
-    }
-}
-
-/// Shows the current tool activity in the center of the bar on non-notch screens.
-/// Keeps the last tool visible for a short linger period to avoid flashing.
-private struct CompactToolStatus: View {
-    var appState: AppState
-
-    /// Single source of truth: all fields derive from the same session.
-    private var displaySessionId: String? {
-        appState.rotatingSessionId ?? appState.activeSessionId ?? appState.sessions.keys.sorted().first
-    }
-    private var displaySession: SessionSnapshot? {
-        guard let sid = displaySessionId else { return nil }
-        return appState.sessions[sid]
-    }
-    private var liveTool: String? { displaySession?.currentTool }
-    private var liveDesc: String? { displaySession?.toolDescription }
-    private var liveOutput: String? { SessionLiveOutputDisplay.summary(for: displaySession) }
-    private var displayStatus: AgentStatus { displaySession?.status ?? .idle }
-    @AppStorage(SettingsKey.showProjectName) private var showProjectName = SettingsDefaults.showProjectName
-    private var projectName: String? {
-        let folder = displaySession?.cwd.flatMap { $0.isEmpty ? nil : ($0 as NSString).lastPathComponent }
-        return SessionHeadline.contextLabel(
-            projectName: folder,
-            sessionLabel: displaySession?.sessionLabel,
-            showProjectName: showProjectName
-        )
-    }
-
-    @State private var shownTool: String?
-    @State private var shownDesc: String?
-    @State private var lingerTimer: Timer?
-
-    /// Extract meaningful part of description — file paths show last component
-    private func shortDesc(_ desc: String) -> String {
-        let trimmed = desc.trimmingCharacters(in: .whitespacesAndNewlines)
-        if trimmed.contains("/") {
-            return (trimmed as NSString).lastPathComponent
-        }
-        return trimmed
-    }
-
-    /// Whether the current session is doing any work (not idle)
-    private var isWorking: Bool { displayStatus != .idle }
-
-    var body: some View {
-        HStack(spacing: 5) {
-            // Project name — shown whenever the session is not idle
-            if isWorking, let project = projectName {
-                CompactContextLabel(text: project)
-                    .id("center-project-\(displaySessionId ?? "")")
-                    .transition(.opacity)
-            }
-
-            // Tool status or thinking indicator
-            if let tool = shownTool {
-                TypingIndicator(fontSize: 11, label: ToolNameDisplay.compact(tool, maxCharacters: 32), bright: true, color: toolStatusColor(tool))
-                    .id("tool-\(tool)-\(appState.rotatingSessionId ?? "")")
-                    .help(tool)
-                if let desc = shownDesc {
-                    MorphText(
-                        text: shortDesc(desc),
-                        font: .system(size: 11, weight: .medium, design: .monospaced),
-                        color: .white.opacity(0.7),
-                        streamsRapidly: displaySession.map {
-                            SessionSnapshot.rapidStreamingSources.contains($0.source)
-                        } ?? false
-                    )
-                    .truncationMode(.tail)
-                }
-            } else if let liveOutput {
-                Text("$")
-                    .fontWeight(.bold)
-                    .foregroundStyle(Color(red: 0.85, green: 0.47, blue: 0.34))
-                MorphText(
-                    text: liveOutput,
-                    font: .system(size: 11, weight: .medium, design: .monospaced),
-                    color: .white.opacity(0.78)
-                )
-                .truncationMode(.tail)
-                .help(liveOutput)
-            } else if displayStatus == .processing {
-                TypingIndicator(fontSize: 11, label: L10n.shared["typing_thinking"], bright: true)
-                    .id("thinking-\(appState.rotatingSessionId ?? "")")
-            }
-        }
-        .font(.system(size: 11, weight: .medium, design: .monospaced))
-        .lineLimit(1)
-        .padding(.leading, 6)
-        .animation(.easeInOut(duration: 0.25), value: shownTool)
-        .animation(.easeInOut(duration: 0.15), value: shownDesc)
-        .animation(.easeInOut(duration: 0.3), value: appState.rotatingSessionId)
-        .onChange(of: liveTool) { _, newTool in
-            lingerTimer?.invalidate()
-            if let newTool {
-                shownTool = newTool
-                shownDesc = liveDesc
-            } else {
-                lingerTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: false) { _ in
-                    DispatchQueue.main.async {
-                        withAnimation(.easeOut(duration: 0.3)) {
-                            shownTool = nil
-                            shownDesc = nil
-                        }
-                    }
-                }
-            }
-        }
-        .onChange(of: liveDesc) { _, newDesc in
-            if liveTool != nil { shownDesc = newDesc }
-        }
-        // Session rotation: immediately sync to avoid stale linger from previous session
-        .onChange(of: appState.rotatingSessionId) { _, _ in
-            lingerTimer?.invalidate()
-            withAnimation(.easeInOut(duration: 0.2)) {
-                shownTool = liveTool
-                shownDesc = liveDesc
-            }
-        }
     }
 }
 
@@ -944,7 +661,6 @@ struct QuitConfirmButton: View {
 // MARK: - Idle Indicator Bar
 
 private struct IdleIndicatorBar: View {
-    let compactWingWidth: CGFloat
     let notchW: CGFloat
     let notchHeight: CGFloat
     let hasNotch: Bool
@@ -956,7 +672,7 @@ private struct IdleIndicatorBar: View {
 
     var body: some View {
         HStack(spacing: 0) {
-            Spacer(minLength: hasNotch ? notchW : 0)
+            Spacer(minLength: hasNotch ? CompactRightWingLayout.leadingLip + notchW : 0)
 
             // Right: expanded shows text + buttons, collapsed shows nothing
             if hovered {
@@ -1037,8 +753,9 @@ private struct SessionListView: View {
     @AppStorage(SettingsKey.contentFontSize) private var contentFontSize = SettingsDefaults.contentFontSize
     @AppStorage(SettingsKey.showProjectName) private var showProjectName = SettingsDefaults.showProjectName
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    /// Natural height of the session cards, scrolling or not.
-    @State private var contentHeight: CGFloat = 0
+    /// Natural height of the session cards, scrolling or not. Owned by the
+    /// panel so the next open starts from the last measurement.
+    @Binding var contentHeight: CGFloat
     /// The order on screen is held while the pointer is over the list.
     @State private var orderFreeze = SessionOrderFreeze()
     @State private var thawTask: Task<Void, Never>?
@@ -1162,25 +879,21 @@ private struct SessionListView: View {
 
 // MARK: - Collapsed right wing layout
 
-/// How the collapsed bar makes room for its right wing on a notched screen.
-///
-/// The right wing (quiet-hours moon, completion dot, question badge, session
-/// count) sits at the bar's right end, and whatever it is wider than its room
-/// reaches back under the notch. Its room is a wing plus half the status
-/// reserve — enough for the count and one badge. With tool status in simple
-/// mode nothing else pads it, so a waiting question's badge slid under the
-/// notch and the completion dot beside it vanished behind it. The bar grows by
-/// what the wing lacks and shifts right by half of it, so the left end and the
-/// gap over the notch stay put.
+/// The collapsed bar hangs off the notch's right: a lip on the left (so the
+/// bar's rounded corner sits clear of the notch), the notch (physical or
+/// simulated), then the right wing — quiet-hours moon, completion dot,
+/// question badge, session count. The wing grows to fit its content clear of
+/// the notch, so nothing slides under it.
 enum CompactRightWingLayout {
-    /// Clearance between the wing's edge and the notch edge.
+    /// Bar visible left of the notch: the collapsed bottom corner radius.
+    static let leadingLip: CGFloat = 12
+    /// Clearance between the wing's content and the notch edge.
     static let notchGap: CGFloat = 4
 
     /// - Parameter contentWidth: the right wing's laid-out width, trailing
     ///   padding included; 0 until it has been measured.
-    static func missing(contentWidth: CGFloat, wing: CGFloat, statusExtra: CGFloat, hasNotch: Bool) -> CGFloat {
-        guard hasNotch, contentWidth > 0 else { return 0 }
-        return Swift.max(0, contentWidth + notchGap - (wing + statusExtra / 2))
+    static func room(contentWidth: CGFloat, minimum: CGFloat) -> CGFloat {
+        Swift.max(minimum, contentWidth + notchGap)
     }
 }
 
@@ -1192,49 +905,63 @@ struct CompactRightWingWidthKey: PreferenceKey {
     }
 }
 
-/// Thin overlay scrollbar via NSScrollView — ignores system "show scrollbar" preference.
-private struct ThinScrollView<Content: View>: NSViewRepresentable {
+/// The session list's scroll area: hugs short content, scrolls past
+/// `maxHeight`, with a thin overlay scrollbar whatever the system's
+/// "Show scroll bars" preference.
+///
+/// A SwiftUI ScrollView, not an NSScrollView hosting the cards: the nested
+/// NSHostingView was built inside the open animation's first frame — after
+/// the animation's clock had started — and its 50–90ms showed as a stutter
+/// every time a scrolling list opened.
+private struct ThinScrollView<Content: View>: View {
     let maxHeight: CGFloat
     @ViewBuilder let content: Content
 
-    /// AppKit puts the system's preferred style back (legacy with a mouse
-    /// attached or "Show scroll bars: Always") on its own schedule; a legacy
-    /// scroller took 13pt off the session list's width until the next update.
-    private final class OverlayScrollView: NSScrollView {
-        override var scrollerStyle: NSScroller.Style {
-            get { super.scrollerStyle }
-            set { super.scrollerStyle = .overlay }
+    var body: some View {
+        ScrollView(.vertical) {
+            content.background(OverlayScrollerStyle())
         }
+        // Order matters (as in PanelFittedScrollArea): fixedSize proposes no
+        // height, so the ScrollView reports its content's and the frame caps it.
+        .frame(maxHeight: maxHeight)
+        .fixedSize(horizontal: false, vertical: true)
     }
+}
 
-    func makeNSView(context: Context) -> NSScrollView {
-        let scrollView = OverlayScrollView()
-        scrollView.hasVerticalScroller = true
-        scrollView.scrollerStyle = .overlay
-        scrollView.verticalScroller?.controlSize = .mini
-        scrollView.drawsBackground = false
-        scrollView.scrollerKnobStyle = .light
+/// Keeps the scroller of the NSScrollView behind a SwiftUI ScrollView a thin
+/// light overlay. AppKit puts the system's preferred style back (legacy with
+/// a mouse attached or "Show scroll bars: Always") on its own schedule, and a
+/// legacy scroller took 13pt off every card. Without an NSScrollView to find,
+/// the system's scroller simply stays.
+private struct OverlayScrollerStyle: NSViewRepresentable {
+    func makeNSView(context: Context) -> Probe { Probe() }
+    func updateNSView(_ probe: Probe, context: Context) { probe.apply() }
 
-        let hosting = NSHostingView(rootView: content)
-        hosting.translatesAutoresizingMaskIntoConstraints = false
-        scrollView.documentView = hosting
+    final class Probe: NSView {
+        private weak var styledScrollView: NSScrollView?
+        private var styleObservation: NSKeyValueObservation?
 
-        scrollView.translatesAutoresizingMaskIntoConstraints = false
-        NSLayoutConstraint.activate([
-            hosting.leadingAnchor.constraint(equalTo: scrollView.contentView.leadingAnchor),
-            hosting.trailingAnchor.constraint(equalTo: scrollView.contentView.trailingAnchor),
-            scrollView.heightAnchor.constraint(lessThanOrEqualToConstant: maxHeight),
-        ])
-
-        return scrollView
-    }
-
-    func updateNSView(_ scrollView: NSScrollView, context: Context) {
-        if let hosting = scrollView.documentView as? NSHostingView<Content> {
-            hosting.rootView = content
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            apply()
         }
-        scrollView.scrollerStyle = .overlay
-        scrollView.verticalScroller?.controlSize = .mini
+
+        func apply() {
+            guard let scrollView = enclosingScrollView else { return }
+            if styledScrollView !== scrollView {
+                styledScrollView = scrollView
+                // Whenever AppKit sets a style, set ours straight back.
+                styleObservation = scrollView.observe(\.scrollerStyle) { [weak self] _, _ in
+                    MainActor.assumeIsolated { self?.apply() }
+                }
+            }
+            if scrollView.scrollerStyle != .overlay { scrollView.scrollerStyle = .overlay }
+            if scrollView.verticalScroller?.controlSize != .mini { scrollView.verticalScroller?.controlSize = .mini }
+            if scrollView.scrollerKnobStyle != .light { scrollView.scrollerKnobStyle = .light }
+        }
+
+        /// Never in the way of the cards it sits behind.
+        override func hitTest(_ point: NSPoint) -> NSView? { nil }
     }
 }
 
@@ -1620,9 +1347,11 @@ private struct SessionCard: View {
                 if session.isYoloMode == true {
                     SessionTag("YOLO", color: Color(red: 1.0, green: 0.35, blue: 0.35))
                 }
-                if showModelLabel, let modelLabel = session.modelLabel {
-                    SessionTag(modelLabel, color: SessionMetadataStyle.modelTagColor, maxWidth: 120)
-                        .help(session.model ?? modelLabel)
+                // Name only: the reasoning effort is still kept on the session
+                // (tooltips, subagents), just not spelled out on the card.
+                if showModelLabel, let modelName = ModelLabel.displayName(for: session.model) {
+                    SessionTag(modelName, maxWidth: 120)
+                        .help(session.model ?? modelName)
                 }
                 SessionTag(timeAgo(session.startTime))
                 TerminalBadge(session: session)
@@ -2645,7 +2374,6 @@ private func subagentTooltipText(_ sub: SubagentState, showModel: Bool = false) 
 // MARK: - Session metadata (recap + model tag)
 
 enum SessionMetadataStyle {
-    static let modelTagColor = Color(red: 0.55, green: 0.82, blue: 0.78)
     /// Recap glyph tint — distinct from the green ">" user and orange "$"
     /// reply markers so a recap never reads as the agent speaking.
     static let recapAccent = Color(red: 0.6, green: 0.68, blue: 1.0)

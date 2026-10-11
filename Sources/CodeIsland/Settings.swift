@@ -101,7 +101,6 @@ enum SettingsKey {
     static let showTaskProgress = "showTaskProgress"
 
     // Tool status display
-    static let showToolStatus = "showToolStatus"              // true = detailed, false = simple
 
     // Island collapsed width scale (percentage: 50–150, default 100)
     static let collapsedWidthScale = "collapsedWidthScale"
@@ -180,7 +179,6 @@ struct SettingsDefaults {
     static let showTaskProgress = true
 
 
-    static let showToolStatus = true
 
     static let collapsedWidthScale = 100  // percentage
 
@@ -252,7 +250,6 @@ class SettingsManager {
             SettingsKey.rotationInterval: SettingsDefaults.rotationInterval,
             SettingsKey.maxToolHistory: SettingsDefaults.maxToolHistory,
             SettingsKey.showTaskProgress: SettingsDefaults.showTaskProgress,
-            SettingsKey.showToolStatus: SettingsDefaults.showToolStatus,
             SettingsKey.collapsedWidthScale: SettingsDefaults.collapsedWidthScale,
             SettingsKey.excludedHookCwdSubstrings: SettingsDefaults.excludedHookCwdSubstrings,
             SettingsKey.claudeConfigDir: SettingsDefaults.claudeConfigDir,

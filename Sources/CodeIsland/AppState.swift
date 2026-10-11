@@ -244,6 +244,56 @@ final class AppState {
             if surface != oldValue {
                 followUps.surfaceChanged(surface)
             }
+            // A summoned panel hides again only once its close animation is done.
+            summonReleaseTask?.cancel()
+            if isSummoned, surface == .collapsed {
+                summonReleaseTask = Task { @MainActor [weak self] in
+                    try? await Task.sleep(for: .seconds(NotchAnimationMetrics.closeResponse + 0.1))
+                    guard !Task.isCancelled, let self, self.surface == .collapsed else { return }
+                    self.isSummoned = false
+                }
+            }
+        }
+    }
+
+    /// The user opened the session list while hideWhenNoSession had the island
+    /// hidden (no active session). Keeps the panel up until it collapses again.
+    var isSummoned = false
+    @ObservationIgnored
+    private var summonReleaseTask: Task<Void, Never>?
+
+    /// Whether hideWhenNoSession currently keeps the island out of sight.
+    func isAutoHidden(hideWhenNoSession: Bool) -> Bool {
+        hideWhenNoSession && activeSessionCount == 0 && !isSummoned
+    }
+
+    /// Whether the collapsed bar stays out of sight: while auto-hidden, and
+    /// while a summoned list closes — it shrinks straight back into the notch
+    /// instead of landing on the bar first.
+    func hidesCollapsedBar(hideWhenNoSession: Bool) -> Bool {
+        hideWhenNoSession && activeSessionCount == 0 && (!isSummoned || surface == .collapsed)
+    }
+
+    /// Open or close the session list on explicit request (shortcut, menu bar
+    /// icon). Also works while auto-hidden, as long as there are past sessions.
+    func toggleSessionList() {
+        let hidden = isAutoHidden(hideWhenNoSession: SettingsManager.shared.hideWhenNoSession)
+        // While hidden the surface may still hold an unseen completion card —
+        // that counts as closed, so the first press opens the list.
+        if surface.isExpanded && !hidden {
+            withAnimation(NotchAnimation.close) { surface = .collapsed }
+            return
+        }
+        if hidden {
+            guard !sessions.isEmpty else { return }
+            isSummoned = true
+        }
+        withAnimation(NotchAnimation.open) {
+            surface = .sessionList
+            cancelCompletionQueue()
+            if activeSessionId == nil {
+                activeSessionId = sessions.keys.sorted().first
+            }
         }
     }
 

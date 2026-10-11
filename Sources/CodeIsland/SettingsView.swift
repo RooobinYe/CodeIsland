@@ -1220,7 +1220,6 @@ private struct AppearancePage: View {
     @AppStorage(SettingsKey.contentFontSize) private var contentFontSize = SettingsDefaults.contentFontSize
     @AppStorage(SettingsKey.aiMessageLines) private var aiMessageLines = SettingsDefaults.aiMessageLines
     @AppStorage(SettingsKey.showAgentDetails) private var showAgentDetails = SettingsDefaults.showAgentDetails
-    @AppStorage(SettingsKey.showToolStatus) private var showToolStatus = SettingsDefaults.showToolStatus
     @AppStorage(SettingsKey.showGitBranch) private var showGitBranch = SettingsDefaults.showGitBranch
     @AppStorage(SettingsKey.showTaskProgress) private var showTaskProgress = SettingsDefaults.showTaskProgress
     @AppStorage(SettingsKey.showSessionRecap) private var showSessionRecap = SettingsDefaults.showSessionRecap
@@ -1360,7 +1359,6 @@ private struct AppearancePage: View {
                     Text(l10n["ai_reply_lines_desc"])
                 }
                 Toggle(l10n["show_agent_details"], isOn: $showAgentDetails)
-                Toggle(l10n["show_tool_status"], isOn: $showToolStatus)
                 VStack(alignment: .leading, spacing: 2) {
                     Toggle(l10n["show_project_name"], isOn: $showProjectName)
                     Text(l10n["show_project_name_desc"])

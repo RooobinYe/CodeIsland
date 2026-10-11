@@ -253,18 +253,4 @@ final class MarkdownReplyViewTests: XCTestCase {
             XCTAssertTrue(preview.hasSuffix("2*3*4 = 24 — see __init__.py and ~/code/a~b~c"), preview)
         }
     }
-
-    // MARK: - Compact bar
-
-    func testCodexLiveOutputSummaryFlattensMarkdown() {
-        var session = SessionSnapshot()
-        session.source = "codex"
-        session.status = .processing
-        session.liveCodexOutput = "## Plan\n- **read** the files\n- run `swift test`\n\n| a | b |\n|---|---|\n| 1 | 2 |"
-
-        XCTAssertEqual(
-            SessionLiveOutputDisplay.summary(for: session),
-            "Plan · read the files · run swift test · a, b · 1, 2"
-        )
-    }
 }

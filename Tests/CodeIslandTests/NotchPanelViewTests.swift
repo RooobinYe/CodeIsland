@@ -3,35 +3,14 @@ import XCTest
 import CodeIslandCore
 
 final class NotchPanelViewTests: XCTestCase {
-    func testEffectiveNotchWidthAppliesCollapsedWidthScaleOnNonNotchScreens() {
+    func testEffectiveNotchWidthAppliesCollapsedWidthScale() {
         XCTAssertEqual(
-            NotchWidthMetrics.effectiveNotchWidth(notchW: 200, collapsedWidthScale: 50, hasNotch: false),
+            NotchWidthMetrics.effectiveNotchWidth(notchW: 200, collapsedWidthScale: 50),
             100,
             accuracy: 0.001
         )
         XCTAssertEqual(
-            NotchWidthMetrics.effectiveNotchWidth(notchW: 200, collapsedWidthScale: 150, hasNotch: false),
-            300,
-            accuracy: 0.001
-        )
-    }
-
-    func testEffectiveNotchWidthNeverShrinksUnderPhysicalNotch() {
-        XCTAssertEqual(
-            NotchWidthMetrics.effectiveNotchWidth(notchW: 200, collapsedWidthScale: 50, hasNotch: true),
-            200,
-            accuracy: 0.001
-        )
-        XCTAssertEqual(
-            NotchWidthMetrics.effectiveNotchWidth(notchW: 200, collapsedWidthScale: 100, hasNotch: true),
-            200,
-            accuracy: 0.001
-        )
-    }
-
-    func testEffectiveNotchWidthWidensBeyondPhysicalNotch() {
-        XCTAssertEqual(
-            NotchWidthMetrics.effectiveNotchWidth(notchW: 200, collapsedWidthScale: 150, hasNotch: true),
+            NotchWidthMetrics.effectiveNotchWidth(notchW: 200, collapsedWidthScale: 150),
             300,
             accuracy: 0.001
         )
@@ -39,12 +18,12 @@ final class NotchPanelViewTests: XCTestCase {
 
     func testEffectiveNotchWidthClampsOutOfRangeScale() {
         XCTAssertEqual(
-            NotchWidthMetrics.effectiveNotchWidth(notchW: 200, collapsedWidthScale: 10, hasNotch: false),
+            NotchWidthMetrics.effectiveNotchWidth(notchW: 200, collapsedWidthScale: 10),
             100,
             accuracy: 0.001
         )
         XCTAssertEqual(
-            NotchWidthMetrics.effectiveNotchWidth(notchW: 200, collapsedWidthScale: 250, hasNotch: false),
+            NotchWidthMetrics.effectiveNotchWidth(notchW: 200, collapsedWidthScale: 250),
             300,
             accuracy: 0.001
         )
@@ -62,42 +41,6 @@ final class NotchPanelViewTests: XCTestCase {
         XCTAssertTrue(compact.hasPrefix("mcp"))
         XCTAssertTrue(compact.hasSuffix("document_page"))
         XCTAssertTrue(compact.contains("..."))
-    }
-
-    func testCodexLiveOutputSummaryNormalizesAndTruncatesPublicText() {
-        var session = SessionSnapshot()
-        session.source = "codex"
-        session.status = .processing
-        session.liveCodexOutput = "  Checking\n  the affected call sites now.  "
-
-        XCTAssertEqual(
-            SessionLiveOutputDisplay.summary(for: session, maxCharacters: 24),
-            "Checking the affected c\u{2026}"
-        )
-    }
-
-    func testCodexLiveOutputSummaryDoesNotFallBackToStaleHistory() {
-        var session = SessionSnapshot()
-        session.source = "codex"
-        session.status = .processing
-        session.recentMessages = [
-            ChatMessage(isUser: false, text: "Old answer"),
-            ChatMessage(isUser: true, text: "New task")
-        ]
-
-        XCTAssertNil(SessionLiveOutputDisplay.summary(for: session))
-    }
-
-    func testLiveOutputSummaryIsLimitedToActiveCodexSessions() {
-        var session = SessionSnapshot()
-        session.source = "claude"
-        session.status = .processing
-        session.liveCodexOutput = "Claude output"
-        XCTAssertNil(SessionLiveOutputDisplay.summary(for: session))
-
-        session.source = "codex"
-        session.status = .idle
-        XCTAssertNil(SessionLiveOutputDisplay.summary(for: session))
     }
 
     func testShouldTriggerJumpFailureFeedbackWhenAllAttemptsFail() {
@@ -263,12 +206,9 @@ final class NotchHoverInteractionTests: XCTestCase {
     }
 
     func testEffectiveNotchWidthClampsToSharedBounds() {
-        // Physical notch is never scaled.
-        XCTAssertEqual(NotchWidthMetrics.effectiveNotchWidth(notchW: 200, collapsedWidthScale: 80, hasNotch: true), 200)
-        // Simulated notch scales and clamps to NotchWidthScale bounds.
-        XCTAssertEqual(NotchWidthMetrics.effectiveNotchWidth(notchW: 200, collapsedWidthScale: 75, hasNotch: false), 150)
-        XCTAssertEqual(NotchWidthMetrics.effectiveNotchWidth(notchW: 200, collapsedWidthScale: 10, hasNotch: false), 100)
-        XCTAssertEqual(NotchWidthMetrics.effectiveNotchWidth(notchW: 200, collapsedWidthScale: 900, hasNotch: false), 300)
+        XCTAssertEqual(NotchWidthMetrics.effectiveNotchWidth(notchW: 200, collapsedWidthScale: 75), 150)
+        XCTAssertEqual(NotchWidthMetrics.effectiveNotchWidth(notchW: 200, collapsedWidthScale: 10), 100)
+        XCTAssertEqual(NotchWidthMetrics.effectiveNotchWidth(notchW: 200, collapsedWidthScale: 900), 300)
     }
 
 }

@@ -36,20 +36,40 @@ esac
 
 echo "==> Building CodeIsland ${VERSION} (${BUILD_ARCH})"
 
+ARCH_OUT_DIR="$BUILD_DIR/dmg-arch"
+ARM_DIR="$ARCH_OUT_DIR/arm64"
+X86_DIR="$ARCH_OUT_DIR/x86_64"
+
+# Build one architecture and copy its products out right away. The output
+# directory depends on the build backend (native: .build/<triple>/release,
+# Swift Build: .build/out/Products/Release, shared by every arch), so ask
+# swift for it and collect before the next arch's build overwrites it.
+build_arch() {
+    local arch="$1"
+    local out_dir="$ARCH_OUT_DIR/$arch"
+    swift build -c release --arch "$arch"
+    local bin_dir
+    bin_dir="$(swift build -c release --arch "$arch" --show-bin-path)"
+    rm -rf "$out_dir"
+    mkdir -p "$out_dir"
+    cp "$bin_dir/CodeIsland" "$bin_dir/codeisland-bridge" "$out_dir/"
+    for bundle in "$bin_dir"/*.bundle; do
+        if [ -e "$bundle" ]; then
+            cp -R "$bundle" "$out_dir/"
+        fi
+    done
+}
+
 cd "$REPO_ROOT"
 case "$BUILD_ARCH" in
     universal)
-        # Build for both architectures
-        swift build -c release --arch arm64
-        swift build -c release --arch x86_64
+        build_arch arm64
+        build_arch x86_64
         ;;
     arm64)
-        swift build -c release --arch arm64
+        build_arch arm64
         ;;
 esac
-
-ARM_DIR="$BUILD_DIR/arm64-apple-macosx/release"
-X86_DIR="$BUILD_DIR/x86_64-apple-macosx/release"
 
 echo "==> Assembling .app bundle"
 
@@ -73,6 +93,15 @@ case "$BUILD_ARCH" in
         ;;
 esac
 chmod +x "$CONTENTS_DIR/MacOS/CodeIsland" "$CONTENTS_DIR/Helpers/codeisland-bridge"
+
+# Swift Build (the default `swift build` backend since Swift 6.4) records the
+# deployment target as the binary's SDK version. AppKit reads that version to
+# pick its look, so a binary stamped "SDK 14.0" gets the legacy split view with
+# a black divider instead of the Liquid Glass sidebar. Stamp the real SDK.
+SDK_VERSION="$(xcrun --sdk macosx --show-sdk-version)"
+xcrun vtool -set-build-version macos 14.0 "$SDK_VERSION" -replace \
+    -output "$CONTENTS_DIR/MacOS/CodeIsland.stamped" "$CONTENTS_DIR/MacOS/CodeIsland"
+mv "$CONTENTS_DIR/MacOS/CodeIsland.stamped" "$CONTENTS_DIR/MacOS/CodeIsland"
 
 # Write Info.plist (use the root Info.plist as base, update version)
 CURRENT_VER=$(defaults read "$REPO_ROOT/Info.plist" CFBundleShortVersionString)
@@ -109,7 +138,7 @@ fi
 # Copy SPM resource bundles into Contents/Resources/ — putting them at the .app
 # root breaks Developer ID signing with "unsealed contents present in the bundle
 # root". Bundle.module already checks resourceURL, so this layout loads fine.
-for bundle in "$BUILD_DIR"/*/release/*.bundle; do
+for bundle in "$ARM_DIR"/*.bundle; do
     if [ -e "$bundle" ]; then
         cp -R "$bundle" "$CONTENTS_DIR/Resources/"
         break

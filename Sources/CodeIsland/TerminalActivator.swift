@@ -388,12 +388,6 @@ struct TerminalActivator {
         }
     }
 
-    /// Walks the CLI process ancestry looking for the nearest running GUI app that is
-    /// neither a known terminal nor a known agent-native app. Returns its bundle ID, or
-    /// nil when the agent runs in a plain terminal / its own desktop app / under launchd.
-    /// Used to jump back to GUI host clients (e.g. OpenChamber) that embed an agent such
-    /// as OpenCode as a managed server process. The ancestor walk is bounded (≤32 hops)
-    /// and click-driven, so cost is negligible.
     /// True when the CLI has a controlling tty — i.e. it runs in a terminal tab
     /// rather than being spawned by a desktop app. The captured `_tty` alone misses
     /// agents that run hooks detached from the terminal (Claude Code, so the bridge
@@ -468,6 +462,12 @@ struct TerminalActivator {
         workspace.open([deepLink], withApplicationAt: appURL, configuration: configuration)
     }
 
+    /// Walks the CLI process ancestry looking for the nearest running GUI app that is
+    /// neither a known terminal nor a known agent-native app. Returns its bundle ID, or
+    /// nil when the agent runs in a plain terminal / its own desktop app / under launchd.
+    /// Used to jump back to GUI host clients (e.g. OpenChamber) that embed an agent such
+    /// as OpenCode as a managed server process. The ancestor walk is bounded (≤32 hops)
+    /// and click-driven, so cost is negligible.
     private static func resolveHostClientBundleId(for session: SessionSnapshot) -> String? {
         guard let pid = session.cliPid, pid > 0 else { return nil }
 

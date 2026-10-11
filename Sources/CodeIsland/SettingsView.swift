@@ -1202,28 +1202,11 @@ private struct AppearancePage: View {
     @AppStorage(SettingsKey.showModelLabel) private var showModelLabel = SettingsDefaults.showModelLabel
     @AppStorage(SettingsKey.showProjectName) private var showProjectName = SettingsDefaults.showProjectName
     @AppStorage(SettingsKey.collapsedWidthScale) private var collapsedWidthScale = SettingsDefaults.collapsedWidthScale
-    @AppStorage(SettingsKey.notchHeightMode) private var notchHeightModeRaw = SettingsDefaults.notchHeightMode
-    @AppStorage(SettingsKey.customNotchHeight) private var customNotchHeight = SettingsDefaults.customNotchHeight
-    @AppStorage(SettingsKey.notchAnimationSpeed) private var notchAnimationSpeed = SettingsDefaults.notchAnimationSpeed
-
-    private var notchHeightMode: Binding<NotchHeightMode> {
-        Binding(
-            get: { NotchHeightMode(rawValue: notchHeightModeRaw) ?? .matchNotch },
-            set: { notchHeightModeRaw = $0.rawValue }
-        )
-    }
 
     private var sessionListDensityBinding: Binding<SessionListDensity> {
         Binding(
             get: { SessionListDensity(storedValue: sessionListDensityRaw) },
             set: { sessionListDensityRaw = $0.rawValue }
-        )
-    }
-
-    private var notchAnimationSpeedBinding: Binding<Double> {
-        Binding(
-            get: { NotchAnimationSpeed.clamped(notchAnimationSpeed) },
-            set: { notchAnimationSpeed = NotchAnimationSpeed.clamped($0) }
         )
     }
 
@@ -1239,25 +1222,6 @@ private struct AppearancePage: View {
             }
 
             Section(l10n["panel"]) {
-                VStack(alignment: .leading, spacing: 4) {
-                    HStack {
-                        Text(l10n["notch_animation_speed"])
-                        Spacer()
-                        Text("\(notchAnimationSpeedBinding.wrappedValue, specifier: "%.1f")×")
-                            .foregroundStyle(.secondary)
-                            .monospacedDigit()
-                    }
-                    Slider(
-                        value: notchAnimationSpeedBinding,
-                        in: NotchAnimationSpeed.minimum...NotchAnimationSpeed.maximum,
-                        step: NotchAnimationSpeed.step
-                    )
-                    .accessibilityLabel(Text(l10n["notch_animation_speed"]))
-                    .accessibilityValue(Text("\(notchAnimationSpeedBinding.wrappedValue, specifier: "%.1f")×"))
-                    Text(l10n["notch_animation_speed_desc"])
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
                 Picker(selection: $maxVisibleSessions) {
                     Text("3").tag(3)
                     Text("5").tag(5)
@@ -1282,38 +1246,17 @@ private struct AppearancePage: View {
                     HStack {
                         Text(l10n["collapsed_width_scale"])
                         Spacer()
-                        Text("\(collapsedWidthScale)%")
+                        Text("\(min(collapsedWidthScale, NotchWidthScale.max))%")
                             .foregroundStyle(.secondary)
                             .monospacedDigit()
                     }
                     Slider(value: Binding(
-                        get: { Double(collapsedWidthScale) },
+                        get: { Double(min(collapsedWidthScale, NotchWidthScale.max)) },
                         set: { collapsedWidthScale = Int($0) }
                     ), in: Double(NotchWidthScale.min)...Double(NotchWidthScale.max), step: Double(NotchWidthScale.step))
                     Text(l10n["collapsed_width_scale_desc"])
                         .font(.caption)
                         .foregroundStyle(.secondary)
-                }
-                VStack(alignment: .leading, spacing: 4) {
-                    Picker(selection: notchHeightMode) {
-                        Text(l10n["notch_height_match_notch"]).tag(NotchHeightMode.matchNotch)
-                        Text(l10n["notch_height_match_menubar"]).tag(NotchHeightMode.matchMenuBar)
-                        Text(l10n["notch_height_custom"]).tag(NotchHeightMode.custom)
-                    } label: {
-                        Text(l10n["notch_height_mode"])
-                        Text(l10n["notch_height_mode_desc"])
-                    }
-
-                    if notchHeightMode.wrappedValue == .custom {
-                        HStack {
-                            Text(l10n["custom_notch_height"])
-                            Spacer()
-                            Text("\(Int(customNotchHeight.rounded()))pt")
-                                .foregroundStyle(.secondary)
-                                .monospacedDigit()
-                        }
-                        Slider(value: $customNotchHeight, in: 15...60, step: 1)
-                    }
                 }
             }
 

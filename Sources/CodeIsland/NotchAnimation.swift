@@ -27,11 +27,11 @@ extension AnyTransition {
     static var islandContent: AnyTransition {
         .asymmetric(
             insertion: .opacity.combined(with: .offset(y: -6)).animation(
-                .easeOut(duration: NotchAnimationMetrics.scaled(NotchAnimationMetrics.baseContentFadeIn))
-                    .delay(NotchAnimationMetrics.scaled(NotchAnimationMetrics.baseContentFadeInDelay))
+                .easeOut(duration: NotchAnimationMetrics.contentFadeIn)
+                    .delay(NotchAnimationMetrics.contentFadeInDelay)
             ),
             removal: .opacity.animation(
-                .easeOut(duration: NotchAnimationMetrics.scaled(NotchAnimationMetrics.baseContentFadeOut))
+                .easeOut(duration: NotchAnimationMetrics.contentFadeOut)
             )
         )
     }

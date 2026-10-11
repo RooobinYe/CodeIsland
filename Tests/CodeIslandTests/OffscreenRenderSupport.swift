@@ -246,8 +246,8 @@ struct DefaultsSandbox {
             SettingsKey.quietHoursEnabled, SettingsKey.quietHoursStart, SettingsKey.quietHoursEnd,
             SettingsKey.autoCollapseAfterSessionJump, SettingsKey.maxVisibleSessions,
             SettingsKey.showGitBranch,
-            SettingsKey.aiMessageLines, SettingsKey.notchHeightMode,
-            SettingsKey.customNotchHeight, SettingsKey.collapseOnMouseLeave, SettingsKey.maxToolHistory,
+            SettingsKey.aiMessageLines,
+            SettingsKey.collapseOnMouseLeave, SettingsKey.maxToolHistory,
             SettingsKey.showSessionRecap, SettingsKey.showModelLabel, SettingsKey.showTaskProgress,
             SettingsKey.showProjectName, SettingsKey.followUpReminderMinutes,
         ] + ShortcutAction.allCases.flatMap { action in

@@ -11,12 +11,6 @@ enum AppVersion {
     }
 }
 
-enum NotchHeightMode: String, CaseIterable {
-    case matchNotch = "matchNotch"
-    case matchMenuBar = "matchMenuBar"
-    case custom = "custom"
-}
-
 enum SettingsKey {
     // Language
     static let appLanguage = "appLanguage"                 // "system", "en", "zh", "zh-Hant", "de", "ja", "ko", "tr"
@@ -33,7 +27,6 @@ enum SettingsKey {
     static let hideWhenNoSession = "hideWhenNoSession"
     static let smartSuppress = "smartSuppress"
     static let collapseOnMouseLeave = "collapseOnMouseLeave"
-    static let notchAnimationSpeed = "notchAnimationSpeed"
     static let autoCollapseAfterSessionJump = "autoCollapseAfterSessionJump"
     static let autoExpandOnCompletion = "autoExpandOnCompletion"
     static let pluginSessionMode = "pluginSessionMode"  // "separate" | "merge" | "hide"
@@ -51,8 +44,6 @@ enum SettingsKey {
     static let contentFontSize = "contentFontSize"
     static let aiMessageLines = "aiMessageLines"
     static let showAgentDetails = "showAgentDetails"
-    static let notchHeightMode = "notchHeightMode"
-    static let customNotchHeight = "customNotchHeight"
 
     // Sound
     static let soundEnabled = "soundEnabled"
@@ -135,7 +126,6 @@ struct SettingsDefaults {
     static let hideWhenNoSession = false
     static let smartSuppress = true
     static let collapseOnMouseLeave = true
-    static let notchAnimationSpeed = NotchAnimationSpeed.normal
     static let autoCollapseAfterSessionJump = false
     static let autoExpandOnCompletion = true
     static let pluginSessionMode = "separate"
@@ -151,8 +141,6 @@ struct SettingsDefaults {
     static let contentFontSize = 11
     static let aiMessageLines = 1
     static let showAgentDetails = false
-    static let notchHeightMode = NotchHeightMode.matchNotch.rawValue
-    static let customNotchHeight = 37.0
 
     static let soundEnabled = false
     static let soundVolume = 50
@@ -211,7 +199,6 @@ class SettingsManager {
             SettingsKey.hideWhenNoSession: SettingsDefaults.hideWhenNoSession,
             SettingsKey.smartSuppress: SettingsDefaults.smartSuppress,
             SettingsKey.collapseOnMouseLeave: SettingsDefaults.collapseOnMouseLeave,
-            SettingsKey.notchAnimationSpeed: SettingsDefaults.notchAnimationSpeed,
             SettingsKey.autoCollapseAfterSessionJump: SettingsDefaults.autoCollapseAfterSessionJump,
             SettingsKey.autoExpandOnCompletion: SettingsDefaults.autoExpandOnCompletion,
             SettingsKey.pluginSessionMode: SettingsDefaults.pluginSessionMode,
@@ -226,8 +213,6 @@ class SettingsManager {
             SettingsKey.contentFontSize: SettingsDefaults.contentFontSize,
             SettingsKey.aiMessageLines: SettingsDefaults.aiMessageLines,
             SettingsKey.showAgentDetails: SettingsDefaults.showAgentDetails,
-            SettingsKey.notchHeightMode: SettingsDefaults.notchHeightMode,
-            SettingsKey.customNotchHeight: SettingsDefaults.customNotchHeight,
             SettingsKey.soundEnabled: SettingsDefaults.soundEnabled,
             SettingsKey.soundVolume: SettingsDefaults.soundVolume,
             SettingsKey.soundSessionStart: SettingsDefaults.soundSessionStart,
@@ -314,11 +299,6 @@ class SettingsManager {
         set { defaults.set(newValue, forKey: SettingsKey.collapseOnMouseLeave) }
     }
 
-    var notchAnimationSpeed: Double {
-        get { NotchAnimationSpeed.clamped(defaults.double(forKey: SettingsKey.notchAnimationSpeed)) }
-        set { defaults.set(NotchAnimationSpeed.clamped(newValue), forKey: SettingsKey.notchAnimationSpeed) }
-    }
-
     var hapticOnHover: Bool {
         get { defaults.bool(forKey: SettingsKey.hapticOnHover) }
         set { defaults.set(newValue, forKey: SettingsKey.hapticOnHover) }
@@ -352,19 +332,6 @@ class SettingsManager {
     var showAgentDetails: Bool {
         get { defaults.bool(forKey: SettingsKey.showAgentDetails) }
         set { defaults.set(newValue, forKey: SettingsKey.showAgentDetails) }
-    }
-
-    var notchHeightMode: NotchHeightMode {
-        get {
-            let raw = defaults.string(forKey: SettingsKey.notchHeightMode) ?? SettingsDefaults.notchHeightMode
-            return NotchHeightMode(rawValue: raw) ?? .matchNotch
-        }
-        set { defaults.set(newValue.rawValue, forKey: SettingsKey.notchHeightMode) }
-    }
-
-    var customNotchHeight: Double {
-        get { defaults.double(forKey: SettingsKey.customNotchHeight) }
-        set { defaults.set(newValue, forKey: SettingsKey.customNotchHeight) }
     }
 
     var maxToolHistory: Int {

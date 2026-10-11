@@ -5,7 +5,7 @@ import CodeIslandCore
 /// slider and the width math in lockstep. Percent of the (simulated) notch width.
 enum NotchWidthScale {
     static let min = 50
-    static let max = 150
+    static let max = 100
     static let step = 1
 }
 

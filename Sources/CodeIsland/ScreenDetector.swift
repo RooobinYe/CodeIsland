@@ -106,20 +106,8 @@ struct ScreenDetector {
             return 25
         }
 
-        let modeRaw = UserDefaults.standard.string(forKey: SettingsKey.notchHeightMode) ?? SettingsDefaults.notchHeightMode
-        let mode = NotchHeightMode(rawValue: modeRaw) ?? .matchNotch
-
-        switch mode {
-        case .matchNotch:
-            if realNotchHeight > 0 { return realNotchHeight }
-            return resolvedMenuBarHeight()
-        case .matchMenuBar:
-            return resolvedMenuBarHeight()
-        case .custom:
-            let custom = UserDefaults.standard.double(forKey: SettingsKey.customNotchHeight)
-            let fallback = SettingsDefaults.customNotchHeight
-            return CGFloat(max(15, min(custom > 0 ? custom : fallback, 60)))
-        }
+        if realNotchHeight > 0 { return realNotchHeight }
+        return resolvedMenuBarHeight()
     }
 
     /// Height of the notch area — returns menu bar height on non-notch screens

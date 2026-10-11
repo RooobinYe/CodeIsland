@@ -1466,6 +1466,13 @@ final class AppState {
         if sessions[sessionId] == nil {
             sessions[sessionId] = SessionSnapshot()
         }
+        // SessionStart (resume, /clear, compact, a host restarting the CLI)
+        // rebuilds the card from scratch, model included. Re-attach the tailer
+        // below so its backfill reads the model back from the transcript; a
+        // tailer left attached to the same path would skip that read.
+        if normalizedEventName == "SessionStart" {
+            detachTranscriptTailer(sessionId: sessionId)
+        }
 
         let prevStatus = sessions[sessionId]?.status
         let wasWaiting = prevStatus == .waitingApproval || prevStatus == .waitingQuestion

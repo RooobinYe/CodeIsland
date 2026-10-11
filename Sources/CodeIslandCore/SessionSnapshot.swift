@@ -1418,6 +1418,11 @@ public func reduceEvent(
         sessions[sessionId] = SessionSnapshot(startTime: Date())
         // Re-apply metadata from this event (common extraction above wrote to the old session)
         if let cwd = event.rawJSON["cwd"] as? String, !cwd.isEmpty { sessions[sessionId]?.cwd = cwd }
+        // The transcript too, so AppState re-attaches its tailer — and re-reads
+        // the model from it — right away rather than on the next event.
+        if let path = event.rawJSON["transcript_path"] as? String, !path.isEmpty {
+            sessions[sessionId]?.transcriptPath = path
+        }
         if let model = hookReportedModel(event) {
             sessions[sessionId]?.model = model
             sessions[sessionId]?.modelReportedAt = Date()

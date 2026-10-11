@@ -411,6 +411,49 @@ final class JSONLTailerTests: XCTestCase {
         tailer.detach(sessionId: "s1")
     }
 
+    /// A fresh Claude session names its transcript in its first hooks before
+    /// writing it. The watch used to give up on the failed open — for good,
+    /// since the caller already counted the session as attached.
+    func testAttachToAMissingFileWatchesItOnceItAppears() throws {
+        let url = temporaryFileURL()
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        let delivered = expectation(description: "first lines delivered")
+        let tailer = JSONLTailer(
+            queue: DispatchQueue(label: "tailer-test"),
+            missingFileRetryDelay: 0.05,
+            onDelta: { delta in
+                if delta.lastAssistantMessage == "first reply" { delivered.fulfill() }
+            }
+        )
+        tailer.attach(sessionId: "s1", filePath: url.path, initialOffset: 0)
+        Thread.sleep(forTimeInterval: 0.2)
+        XCTAssertEqual(tailer.activeSessionCount, 0)
+
+        try Data((assistantLine(text: "first reply") + "\n").utf8).write(to: url)
+
+        wait(for: [delivered], timeout: 2)
+        XCTAssertEqual(tailer.activeSessionCount, 1)
+        tailer.detach(sessionId: "s1")
+    }
+
+    func testDetachStopsWaitingForAMissingFile() throws {
+        let url = temporaryFileURL()
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        let tailer = JSONLTailer(
+            queue: DispatchQueue(label: "tailer-test"),
+            missingFileRetryDelay: 0.05,
+            onDelta: { _ in }
+        )
+        tailer.attach(sessionId: "s1", filePath: url.path)
+        tailer.detach(sessionId: "s1")
+        try Data((assistantLine(text: "too late") + "\n").utf8).write(to: url)
+        Thread.sleep(forTimeInterval: 0.3)
+
+        XCTAssertEqual(tailer.activeSessionCount, 0)
+    }
+
     // MARK: - Integration: offset accounting across partial writes (#278)
 
     /// A JSONL line flushed in two chunks (no newline in the first) must be

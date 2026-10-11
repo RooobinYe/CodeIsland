@@ -128,6 +128,10 @@ public final class JSONLTailer: @unchecked Sendable {
     private let queue: DispatchQueue
     private let onDelta: DeltaHandler
     private let replacementReattachDelay: DispatchTimeInterval
+    /// First wait before re-trying a transcript that does not exist yet;
+    /// doubles per attempt up to `maxMissingFileRetryDelay`.
+    private let missingFileRetryDelay: TimeInterval
+    private static let maxMissingFileRetryDelay: TimeInterval = 8
     private var watches: [String: Watch] = [:]
     private var desiredFilePaths: [String: String] = [:]
     private var generations: [String: UInt64] = [:]
@@ -135,10 +139,12 @@ public final class JSONLTailer: @unchecked Sendable {
     public init(
         queue: DispatchQueue = DispatchQueue(label: "com.codeisland.jsonl-tailer"),
         replacementReattachDelay: DispatchTimeInterval = .milliseconds(50),
+        missingFileRetryDelay: TimeInterval = 0.5,
         onDelta: @escaping DeltaHandler
     ) {
         self.queue = queue
         self.replacementReattachDelay = replacementReattachDelay
+        self.missingFileRetryDelay = missingFileRetryDelay
         self.onDelta = onDelta
     }
 
@@ -217,14 +223,37 @@ public final class JSONLTailer: @unchecked Sendable {
         readPendingBytes: Bool = false,
         replacesFile: Bool = false,
         generation: UInt64,
-        attachmentToken: UUID
+        attachmentToken: UUID,
+        missingFileAttempt: Int = 0
     ) {
         guard desiredFilePaths[sessionId] == filePath,
               generations[sessionId] == generation else {
             return
         }
         let fd = open(filePath, O_RDONLY | O_NONBLOCK)
-        guard fd >= 0 else { return }
+        guard fd >= 0 else {
+            // A CLI can name its transcript before writing it: a fresh Claude
+            // session's first hooks fire before the file exists. Keep trying
+            // until it appears or the watch is dropped. Everything in a file
+            // that did not exist yet is new, so read it from the start.
+            guard errno == ENOENT else { return }
+            let delay = min(
+                missingFileRetryDelay * pow(2, Double(min(missingFileAttempt, 16))),
+                Self.maxMissingFileRetryDelay
+            )
+            queue.asyncAfter(deadline: .now() + delay) { [weak self] in
+                self?.attachOnQueue(
+                    sessionId: sessionId,
+                    filePath: filePath,
+                    initialOffset: 0,
+                    readPendingBytes: true,
+                    generation: generation,
+                    attachmentToken: attachmentToken,
+                    missingFileAttempt: missingFileAttempt + 1
+                )
+            }
+            return
+        }
         var fileStat = stat()
         guard fstat(fd, &fileStat) == 0 else {
             close(fd)

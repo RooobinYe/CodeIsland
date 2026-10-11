@@ -93,6 +93,34 @@ final class AppStateModelLabelTests: XCTestCase {
         XCTAssertNil(appState.sessions["resumed"]?.reasoningEffort, "Opus's effort is not Sonnet's")
     }
 
+    /// A host restarting the CLI (Claude Desktop does) fires SessionStart for
+    /// a session whose tailer is already attached. The rebuilt card used to
+    /// keep no model until the next assistant line was written.
+    func testSessionStartOnAnAttachedSessionReadsTheModelBack() throws {
+        let path = try writeTranscript([
+            userLine("earlier work"),
+            assistantLine(model: "claude-opus-5-5", effort: "high"),
+        ], name: "restart.jsonl")
+        let appState = AppState()
+        defer { appState.detachTranscriptTailer(sessionId: "restarted") }
+        func hook(_ name: String) throws -> HookEvent {
+            try XCTUnwrap(HookEvent(from: JSONSerialization.data(withJSONObject: [
+                "hook_event_name": name,
+                "session_id": "restarted",
+                "transcript_path": path,
+                "cwd": tempDir.path,
+            ])))
+        }
+
+        appState.handleEvent(try hook("UserPromptSubmit"))
+        XCTAssertEqual(appState.sessions["restarted"]?.model, "claude-opus-5-5")
+
+        appState.handleEvent(try hook("SessionStart"))
+
+        XCTAssertEqual(appState.sessions["restarted"]?.model, "claude-opus-5-5")
+        XCTAssertEqual(appState.sessions["restarted"]?.reasoningEffort, "high")
+    }
+
     // MARK: - Subagents' own models
 
     private func hook(_ payload: [String: Any]) throws -> HookEvent {

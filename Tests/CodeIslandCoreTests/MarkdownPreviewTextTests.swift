@@ -92,10 +92,10 @@ final class MarkdownPreviewTextTests: XCTestCase {
         XCTAssertFalse(runs.contains { $0.0.contains(" · ") && $0.1 != nil }, "separators carry no styling")
     }
 
-    func testInlineLinksSurviveAsLinks() {
+    func testInlineLinksBecomePlainText() {
         let preview = ChatMessageTextFormatter.markdownPreview("- see [docs](https://example.dev)", singleLine: true)
         XCTAssertEqual(String(preview.characters), "see docs")
-        XCTAssertTrue(preview.runs.contains { $0.link == URL(string: "https://example.dev") })
+        XCTAssertTrue(preview.runs.allSatisfy { $0.link == nil })
     }
 
     // MARK: - Source budget

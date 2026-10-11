@@ -30,10 +30,8 @@ struct AssistantReplyText: View {
                 .foregroundStyle(IslandMarkdownStyle.body)
                 .lineLimit(lineLimit)
                 .truncationMode(.tail)
-                .tint(IslandMarkdownStyle.link)
         } else {
             MarkdownBlocksView(blocks: ChatMessageTextFormatter.markdownBlocks(text), fontSize: fontSize)
-                .tint(IslandMarkdownStyle.link)
         }
     }
 }
@@ -59,7 +57,6 @@ private struct CompletionReplyView: View {
                 .environment(\.islandMarkdownCapsBlockHeight, false)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .tint(IslandMarkdownStyle.link)
     }
 }
 
@@ -283,7 +280,6 @@ enum IslandMarkdownStyle {
     static let stripeSurface = Color.white.opacity(0.03)
     /// Opaque, so a code line scrolled under the language tag doesn't show through.
     static let badgeSurface = Color(white: 0.13)
-    static let link = Color(red: 0.45, green: 0.72, blue: 1.0)
     static let inlineCode = Color(red: 0.96, green: 0.74, blue: 0.54)
     static let inlineCodeSurface = Color.white.opacity(0.08)
     static let checked = Color(red: 0.3, green: 0.85, blue: 0.4)

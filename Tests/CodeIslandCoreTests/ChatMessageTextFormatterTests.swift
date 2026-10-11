@@ -20,6 +20,26 @@ final class ChatMessageTextFormatterTests: XCTestCase {
         XCTAssertTrue(rendered.runs.contains { $0.inlinePresentationIntent != nil })
     }
 
+    // MARK: - Links
+
+    func testRelativeFileLinksRenderAsPlainText() {
+        let rendered = ChatMessageTextFormatter.inlineSpans(
+            "Only one file: [PanelWindowController.swift](Sources/CodeIsland/PanelWindowController.swift:42)."
+        )
+
+        XCTAssertEqual(String(rendered.characters), "Only one file: PanelWindowController.swift.")
+        XCTAssertTrue(rendered.runs.allSatisfy { $0.link == nil })
+    }
+
+    func testWebLinksRenderAsPlainText() {
+        let rendered = ChatMessageTextFormatter.inlineSpans(
+            "See [the PR](https://github.com/o/r/pull/1) or <https://example.com>."
+        )
+
+        XCTAssertEqual(String(rendered.characters), "See the PR or https://example.com.")
+        XCTAssertTrue(rendered.runs.allSatisfy { $0.link == nil })
+    }
+
     // MARK: - Fenced code blocks (issue #101)
 
     func testFencedCodeBlockDoesNotLeakLanguageIdentifierOrCollapseNewlines() {

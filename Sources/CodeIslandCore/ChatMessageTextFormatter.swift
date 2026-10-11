@@ -101,8 +101,21 @@ public enum ChatMessageTextFormatter {
             markdown: MarkdownInlineLiterals.escapingWordDelimiters(text),
             options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)
         ) {
-            return attr
+            return unlinking(attr)
         }
         return AttributedString(text)
+    }
+
+    /// A click anywhere on a session card jumps to its session, so nothing
+    /// in a reply is a link. A link would swallow that click — and agents
+    /// mostly link files by a path relative to the session's directory
+    /// (`[Foo.swift](Sources/Foo.swift)`), which the system can't open
+    /// (Finder error -50). Links render as plain text.
+    private static func unlinking(_ text: AttributedString) -> AttributedString {
+        var result = text
+        for range in result.runs.filter({ $0.link != nil }).map(\.range) {
+            result[range].link = nil
+        }
+        return result
     }
 }

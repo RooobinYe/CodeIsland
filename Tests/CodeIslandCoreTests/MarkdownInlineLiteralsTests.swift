@@ -54,11 +54,9 @@ final class MarkdownInlineLiteralsTests: XCTestCase {
 
         let url = rendered("see https://example.dev/a_b_c/d~e and more")
         XCTAssertEqual(String(url.characters), "see https://example.dev/a_b_c/d~e and more")
-        XCTAssertTrue(url.runs.contains { $0.link == URL(string: "https://example.dev/a_b_c/d~e") })
 
         let link = rendered("[the_docs](https://example.dev/x_y) for 2*3*4")
         XCTAssertEqual(String(link.characters), "the_docs for 2*3*4")
-        XCTAssertTrue(link.runs.contains { $0.link == URL(string: "https://example.dev/x_y") })
 
         XCTAssertEqual(plain("mail first_last@example.dev"), "mail first_last@example.dev")
     }

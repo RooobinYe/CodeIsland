@@ -1099,8 +1099,6 @@ struct ConfigInstaller {
             if installHooks(inExtraDir: cli, fm: fm) == .failed { ok = false }
         }
 
-        // Codex's required feature flag is installed by installExternalHooks;
-        // its failure contributes to `ok` above, rather than reporting success.
         if isEnabled(source: "codex"),
            fm.fileExists(atPath: codexHome()) {
             repairCodexMCPApprovalTables(fm: fm)
@@ -1476,13 +1474,6 @@ struct ConfigInstaller {
                 }
             }
         }
-        // Codex config.toml: ensure hooks = true
-        if isEnabled(source: "codex"),
-           fm.fileExists(atPath: codexHome()) {
-            if !enableCodexHooksConfig(fm: fm) {
-                repaired.removeAll { $0 == "Codex" }
-            }
-        }
         repaired.append(contentsOf: repairExtraConfigDirs(fm: fm))
         // OpenCode plugin
         if isEnabled(source: "opencode"),
@@ -1830,18 +1821,13 @@ struct ConfigInstaller {
             """
         }
 
-        guard writeJSONWithKey(
+        return writeJSONWithKey(
             cli: cli,
             originalText: seeded,
             key: cli.configKey,
             value: hooks,
             fm: fm
-        ) else { return false }
-        // A hooks.json without the activation flag is not an installed Codex
-        // integration. Extra roots perform their own shared-file ownership check
-        // before activating; primary install/toggle/repair must propagate failure.
-        return cli.source != "codex" || cli.extraConfigDir != nil
-            || enableCodexHooksConfig(fm: fm, codexHome: cli.dirPath)
+        )
     }
 
     private static func managedTraecliHookObject(source: String = "traecli") -> [String: Any] {
@@ -2830,34 +2816,6 @@ struct ConfigInstaller {
             return false
         }
         return ConfigPathIdentity.write(Data(repaired.utf8), to: configPath, fileManager: fm)
-    }
-
-    /// Ensure the Codex hooks feature flag is true in $CODEX_HOME/config.toml
-    /// (or ~/.codex/config.toml when unset) so Codex actually fires hook events.
-    /// The source editor recognizes quoted/bare keys and table scope without
-    /// touching comments, unrelated flags or strings containing TOML examples.
-    /// An unsupported/conflicting layout is left untouched and returns false.
-    /// `codexHome` is overridden for extra Codex roots registered in Settings —
-    /// each root has its own config.toml, and a hooks.json without the flag
-    /// next to it is never read. A symlinked config.toml is edited at its
-    /// target and stays a symlink.
-    @discardableResult
-    static func enableCodexHooksConfig(fm: FileManager, codexHome: String = ConfigInstaller.codexHome()) -> Bool {
-        let configPath = codexHome + "/config.toml"
-        try? fm.createDirectory(
-            atPath: (configPath as NSString).deletingLastPathComponent,
-            withIntermediateDirectories: true
-        )
-        let contents: String
-        if fm.fileExists(atPath: configPath) {
-            guard let existing = try? String(contentsOfFile: configPath, encoding: .utf8) else { return false }
-            contents = existing
-        } else {
-            contents = ""
-        }
-        guard let result = CodexHooksConfig.enablingHooks(in: contents) else { return false }
-        if result == contents { return true }
-        return ConfigPathIdentity.write(Data(result.utf8), to: configPath, fileManager: fm)
     }
 
     // MARK: - Kimi Code CLI (TOML hooks)
@@ -3891,7 +3849,7 @@ extension ConfigInstaller {
     /// and events from it arrive as ordinary Claude / Codex / Grok sessions.
     /// (A *custom CLI* is the other extension point, and the wrong one here: it
     /// registers a new source, so those sessions would not be Claude/Codex/Grok
-    /// sessions at all — no transcripts, no usage, no Codex config.toml flag.)
+    /// sessions at all — no transcripts, no usage.)
     static func extraConfigDirCLI(for dir: ExtraConfigDir) -> CLIConfig? {
         guard var cli = builtInCLIs.first(where: { $0.source == dir.cli.source }) else { return nil }
         let root = dir.path
@@ -3946,42 +3904,13 @@ extension ConfigInstaller {
         let others = peers ?? earlierEnabledPeers(of: root, cli: kind, in: ExtraConfigDirs.load())
         let hooksOwner = ExtraConfigDirs.sharedFileOwner(cli.configPath, root: root, primary: primary, peers: others)
 
+        if let hooksOwner { return .shared(with: hooksOwner) }
         let ok: Bool
         switch kind {
-        case .claude:
-            if let hooksOwner { return .shared(with: hooksOwner) }
-            ok = installClaudeHooks(cli: cli, fm: fm)
-        case .codex:
-            // Without `hooks = true` in *this* root's config.toml, Codex started
-            // with CODEX_HOME=<root> never reads the hooks.json beside it — even
-            // when that hooks.json is a shared one.
-            if let hooksOwner {
-                return enableCodexFeatureFlag(inExtraRoot: root, primaryRoot: primary, peers: others, fm: fm)
-                    ? .shared(with: hooksOwner) : .failed
-            }
-            ok = installExternalHooks(cli: cli, fm: fm)
-                && enableCodexFeatureFlag(inExtraRoot: root, primaryRoot: primary, peers: others, fm: fm)
-        case .grok:
-            if let hooksOwner { return .shared(with: hooksOwner) }
-            ok = installExternalHooks(cli: cli, fm: fm)
+        case .claude: ok = installClaudeHooks(cli: cli, fm: fm)
+        case .codex, .grok: ok = installExternalHooks(cli: cli, fm: fm)
         }
         return ok ? .installed : .failed
-    }
-
-    /// `hooks = true` in an extra Codex root's config.toml — unless that
-    /// config.toml is the primary's (or an earlier root's) file, which its
-    /// owner flags itself.
-    @discardableResult
-    static func enableCodexFeatureFlag(
-        inExtraRoot root: String,
-        primaryRoot: String,
-        peers: [String],
-        fm: FileManager
-    ) -> Bool {
-        if ExtraConfigDirs.sharedFileOwner("config.toml", root: root, primary: primaryRoot, peers: peers) != nil {
-            return true
-        }
-        return enableCodexHooksConfig(fm: fm, codexHome: root)
     }
 
     /// Take CodeIsland's hooks out of one extra root — unless its hooks file
@@ -4172,7 +4101,6 @@ extension ConfigInstaller {
                   ExtraConfigDirs.inspect(path: root, cli: kind) == .ready else { continue }
             let primary = primaryConfigRoot(for: kind)
             let peers = earlierEnabledPeers(of: root, cli: kind, in: dirs)
-            if kind == .codex { enableCodexFeatureFlag(inExtraRoot: root, primaryRoot: primary, peers: peers, fm: fm) }
             if ExtraConfigDirs.sharedFileOwner(cli.configPath, root: root, primary: primary, peers: peers) != nil { continue }
             if isHooksInstalled(for: cli, fm: fm) { continue }
             if shouldPreservePartialHooks(for: cli, fm: fm) { continue }

@@ -61,7 +61,7 @@ final class ExtraConfigDirInstallerTests: XCTestCase {
 
     // MARK: - Codex
 
-    func testCodexRootGetsHooksAndItsOwnFeatureFlag() throws {
+    func testCodexRootGetsHooksAndItsConfigIsLeftAlone() throws {
         let root = try makeRoot("codex-work", files: ["auth.json"], dirs: ["sessions"])
         let cli = try XCTUnwrap(ConfigInstaller.extraConfigDirCLI(for: ExtraConfigDir(cli: .codex, path: root)))
 
@@ -71,9 +71,8 @@ final class ExtraConfigDirInstallerTests: XCTestCase {
         let stop = try XCTUnwrap(hooks["Stop"] as? [[String: Any]])
         let command = try XCTUnwrap((stop.first?["hooks"] as? [[String: Any]])?.first?["command"] as? String)
         XCTAssertTrue(command.hasSuffix("--source codex"))
-        // Codex started with CODEX_HOME=<root> reads *this* config.toml.
-        let toml = try String(contentsOfFile: root + "/config.toml", encoding: .utf8)
-        XCTAssertTrue(toml.contains("hooks = true"))
+        // Hooks are on by default in Codex, so config.toml is never written.
+        XCTAssertFalse(fm.fileExists(atPath: root + "/config.toml"))
 
         let status = try XCTUnwrap(ConfigInstaller.extraConfigDirStatus(for: ExtraConfigDir(cli: .codex, path: root)))
         XCTAssertEqual(status.inspection, .ready)

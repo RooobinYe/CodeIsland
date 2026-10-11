@@ -55,20 +55,15 @@ final class ConfigSymlinkWriteTests: XCTestCase {
 
     // MARK: - Extra roots
 
-    func testCodexExtraRootKeepsItsSymlinkedHooksAndConfigFiles() throws {
+    func testCodexExtraRootKeepsItsSymlinkedHooksFile() throws {
         let root = try makeDir("codex-work", files: ["auth.json"])
         let hooksTarget = try linkToDotfile(root + "/hooks.json", named: "codex-hooks.json", contents: "{}\n")
-        let configTarget = try linkToDotfile(root + "/config.toml", named: "codex-config.toml", contents: "model = \"o3\"\n")
         let cli = try XCTUnwrap(ConfigInstaller.extraConfigDirCLI(for: ExtraConfigDir(cli: .codex, path: root)))
 
         XCTAssertEqual(ConfigInstaller.installHooks(inExtraDir: cli, fm: fm, primaryRoot: sandbox + "/primary", peers: []), .installed)
 
         XCTAssertTrue(isSymlink(root + "/hooks.json"), "hooks.json is still the shared link")
-        XCTAssertTrue(isSymlink(root + "/config.toml"), "config.toml is still the shared link")
         XCTAssertNotNil(try hooks(inJSONAt: hooksTarget)["Stop"], "the hooks landed in the linked file")
-        let toml = try String(contentsOfFile: configTarget, encoding: .utf8)
-        XCTAssertTrue(toml.contains("hooks = true"))
-        XCTAssertTrue(toml.contains("model = \"o3\""))
 
         // A second install (Codex rewrites hooks.json every time) keeps it too.
         XCTAssertEqual(ConfigInstaller.installHooks(inExtraDir: cli, fm: fm, primaryRoot: sandbox + "/primary", peers: []), .installed)
@@ -78,7 +73,8 @@ final class ConfigSymlinkWriteTests: XCTestCase {
     // MARK: - Primary root (the same write paths)
 
     /// The primary Codex entry, rooted at `$CODEX_HOME`: before the fix its
-    /// hooks.json and config.toml symlinks were replaced by copies as well.
+    /// hooks.json symlink was replaced by a copy as well. Its config.toml is
+    /// never written, so a user's `hooks = false` stays theirs.
     func testPrimaryCodexRootKeepsItsSymlinkedFiles() throws {
         let home = try makeDir("codex")
         setenv("CODEX_HOME", home, 1)
@@ -88,13 +84,9 @@ final class ConfigSymlinkWriteTests: XCTestCase {
         XCTAssertEqual(primary.fullPath, home + "/hooks.json")
 
         XCTAssertTrue(ConfigInstaller.installExternalHooks(cli: primary, fm: fm))
-        XCTAssertTrue(ConfigInstaller.enableCodexHooksConfig(fm: fm))
         XCTAssertTrue(isSymlink(home + "/hooks.json"))
-        XCTAssertTrue(isSymlink(home + "/config.toml"))
         XCTAssertNotNil(try hooks(inJSONAt: hooksTarget)["Stop"])
-        let toml = try String(contentsOfFile: configTarget, encoding: .utf8)
-        XCTAssertTrue(toml.hasPrefix("[features]\nhooks = true"))
-        XCTAssertFalse(toml.contains("hooks = false"))
+        XCTAssertEqual(try String(contentsOfFile: configTarget, encoding: .utf8), "[features]\nhooks = false\n")
 
         ConfigInstaller.uninstallHooks(cli: primary, fm: fm)
         XCTAssertTrue(isSymlink(home + "/hooks.json"))
@@ -109,10 +101,8 @@ final class ConfigSymlinkWriteTests: XCTestCase {
         let primary = try XCTUnwrap(ConfigInstaller.allCLIs.first { $0.source == "codex" })
 
         XCTAssertTrue(ConfigInstaller.installExternalHooks(cli: primary, fm: fm))
-        XCTAssertTrue(ConfigInstaller.enableCodexHooksConfig(fm: fm))
         XCTAssertFalse(isSymlink(home + "/hooks.json"))
         XCTAssertNotNil(try hooks(inJSONAt: home + "/hooks.json")["Stop"])
-        XCTAssertTrue(try String(contentsOfFile: home + "/config.toml", encoding: .utf8).contains("hooks = true"))
     }
 
 }

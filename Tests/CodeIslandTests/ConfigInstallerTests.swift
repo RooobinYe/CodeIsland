@@ -1047,10 +1047,8 @@ hooks:
         XCTAssertTrue(script.contains("TRAECLI_EVENTS"))
         XCTAssertTrue(script.contains("\"session_start\""))
         XCTAssertTrue(script.contains("\"session_end\""))
-        // The generated source editor writes the current Codex feature name;
-        // RemoteCodexTomlHooksTests execute its scoped legacy migration.
-        XCTAssertTrue(script.contains("hooks = true"))
-        XCTAssertFalse(script.contains("codex_hooks = true"))
+        // Codex hooks are on by default; the script leaves config.toml alone.
+        XCTAssertFalse(script.contains("hooks = true"))
         // Ensure remote TraeCli YAML merge has indentation repair to avoid invalid YAML.
         XCTAssertTrue(script.contains("def _normalize_traecli_hooks_list_indentation"))
     }

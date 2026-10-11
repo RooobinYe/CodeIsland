@@ -173,7 +173,6 @@ final class ExtraConfigDirSharingTests: XCTestCase {
 
     /// Two extra Codex roots sharing one hooks.json: the earlier one manages
     /// it, and pausing the later one leaves the earlier one's hooks in place.
-    /// The later root still gets `hooks = true` in its own config.toml.
     func testTwoExtraRootsSharingAHooksFile() throws {
         let first = try makeRoot("codex-a", files: ["auth.json"])
         let second = try makeRoot("codex-b", files: ["auth.json"])
@@ -189,7 +188,6 @@ final class ExtraConfigDirSharingTests: XCTestCase {
             ConfigInstaller.installHooks(inExtraDir: secondCLI, fm: fm, primaryRoot: primary, peers: [first]),
             .shared(with: first)
         )
-        XCTAssertTrue(try String(contentsOfFile: second + "/config.toml", encoding: .utf8).contains("hooks = true"))
 
         ConfigInstaller.setExtraConfigDirEnabled(id: dirs[1].id, enabled: false, defaults: defaults, primaryRoot: { _ in primary })
         XCTAssertTrue(hasOurHooks(at: first + "/hooks.json"), "the first root still uses them")

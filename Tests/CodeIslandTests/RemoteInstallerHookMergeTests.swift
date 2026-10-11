@@ -150,7 +150,9 @@ final class RemoteInstallerHookMergeTests: XCTestCase {
         XCTAssertTrue(cmds.contains { $0.contains("codeisland-remote-hook.py") }, "our hook missing: \(cmds)")
     }
 
-    func testCodexConfigFailureIsReportedWithoutChangingConfig() throws {
+    /// Codex hooks are on by default, so the user's config.toml — even an
+    /// explicit opt-out — is never touched.
+    func testCodexInstallLeavesConfigTomlAlone() throws {
         let root = sandboxHome.appendingPathComponent(".codex", isDirectory: true)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         let config = root.appendingPathComponent("config.toml")
@@ -159,8 +161,7 @@ final class RemoteInstallerHookMergeTests: XCTestCase {
 
         let status = try runConfigureScript()
 
-        XCTAssertTrue(status.contains("Codex config update failed"), status)
-        XCTAssertFalse(status.contains("Codex ok"), status)
+        XCTAssertTrue(status.contains("Codex ok"), status)
         XCTAssertEqual(try String(contentsOf: config, encoding: .utf8), original)
     }
 

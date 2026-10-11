@@ -163,10 +163,10 @@ final class AppState {
     /// that was closed and subsequently re-created.
     @ObservationIgnored
     var attachedTranscriptTokens: [String: UUID] = [:]
-    /// Attach-time checklist scans still running off the main actor, keyed by
-    /// session. See AppState+AgentTasks.
+    /// Attach-time Codex model searches still running off the main actor,
+    /// keyed by session. See AppState+SessionMetadata.
     @ObservationIgnored
-    var pendingAgentTaskBackfills: [String: PendingAgentTaskBackfill] = [:]
+    var pendingCodexModelBackfills: [String: PendingCodexModelBackfill] = [:]
     /// Watches active session transcripts for appended assistant lines. Lazily
     /// constructed so the delta handler can safely capture `self`.
     @ObservationIgnored
@@ -2230,20 +2230,9 @@ final class AppState {
             snapshot.hermesChatElsewhere = p.hermesChatElsewhere ?? false
             snapshot.lastActivity = p.lastActivity
             snapshot.transcriptPath = p.transcriptPath
-            snapshot.recap = p.recap
             snapshot.reasoningEffort = p.reasoningEffort
-            // A prompt typed while CodeIsland wasn't running supersedes the
-            // saved recap; the transcript tail is the judge. Restored cards
-            // don't always get a tailer, so check now rather than on attach.
-            if snapshot.recap != nil, let path = snapshot.transcriptPath,
-               let scan = JSONLTailer.scanFileTail(path: path) {
-                _ = snapshot.applyTranscriptBackfill(scan)
-            }
             if let closed = p.closedSubagentIds, !closed.isEmpty {
                 snapshot.restoreClosedSubagentIds(closed)
-            }
-            if let agentTasks = p.agentTasks {
-                snapshot.agentTasks = agentTasks
             }
             // Restore persisted cliPid only if the process is still alive — avoids
             // stale sessions reappearing briefly after the app or IDE restarts (#46).

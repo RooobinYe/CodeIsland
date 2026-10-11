@@ -342,15 +342,6 @@ enum GalleryDemo {
         var plan = SubagentState(agentId: "plan-1", agentType: "Plan")
         plan.status = .idle
         s.subagents["plan-1"] = plan
-        s.agentTasks = AgentTaskList(items: [
-            AgentTaskItem(id: "t1", title: lang.t("Read the dashboard layout", "阅读仪表盘布局", "Dashboard-Layout lesen"), status: .completed),
-            AgentTaskItem(id: "t2", title: lang.t("Add the filter bar component", "添加筛选栏组件", "Filterleisten-Komponente hinzufügen"), status: .completed),
-            AgentTaskItem(id: "t3", title: lang.t("Wire filters into the orders query", "把筛选接入订单查询", "Filter an die Bestellabfrage anbinden"),
-                          activeForm: lang.t("Wiring filters into the orders query", "正在把筛选接入订单查询", "Filter werden an die Bestellabfrage angebunden"),
-                          status: .inProgress),
-            AgentTaskItem(id: "t4", title: lang.t("Persist filters in the URL", "把筛选状态写入 URL", "Filter in der URL speichern"), status: .pending),
-            AgentTaskItem(id: "t5", title: lang.t("Write tests", "编写测试", "Tests schreiben"), status: .pending),
-        ])
         return s
     }
 
@@ -386,11 +377,6 @@ enum GalleryDemo {
                  reply: lang.t("Updated 6 pages under docs/api and fixed 3 broken links.",
                                "已更新 docs/api 下的 6 个页面，并修复了 3 个失效链接。",
                                "6 Seiten unter docs/api aktualisiert und 3 defekte Links repariert."))
-        s.recap = SessionRecap(text: lang.t(
-            "Documented the filter API (6 pages) and fixed broken links. Next: review the new examples.",
-            "已为筛选 API 写好文档（6 页）并修复失效链接。下一步：检查新增示例。",
-            "Filter-API dokumentiert (6 Seiten) und defekte Links repariert. Als Nächstes: neue Beispiele prüfen."),
-            createdAt: Date())
         return s
     }
 
@@ -576,11 +562,6 @@ enum GalleryDemo {
                 """)
         }
         converse(&s, prompt: prompt, reply: reply)
-        s.recap = SessionRecap(text: lang.t(
-            "Shipped dashboard filters; 42 tests pass. Next: your call on the export page.",
-            "仪表盘筛选已完成，42 个测试通过。下一步：由你决定导出页。",
-            "Dashboard-Filter fertig; 42 Tests bestanden. Als Nächstes: deine Entscheidung zur Export-Seite."),
-            createdAt: Date())
         state.sessions = [ID.claude: s, ID.codex: codexWorking(lang)]
         state.activeSessionId = ID.claude
         state.refreshDerivedState()

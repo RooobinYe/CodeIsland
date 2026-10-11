@@ -524,7 +524,7 @@ final class JSONLTailerTests: XCTestCase {
         tailer.detach(sessionId: "s1")
     }
 
-    func testReplacedFileHistoryIsDeliveredOnceAsAReplayThenLiveAgain() throws {
+    func testReplacedFileHistoryIsReadAtOnceThenNewWritesArriveOnTheirOwn() throws {
         let url = temporaryFileURL()
         let backup = url.deletingLastPathComponent()
             .appendingPathComponent(url.lastPathComponent + ".old")
@@ -534,7 +534,7 @@ final class JSONLTailerTests: XCTestCase {
             try? FileManager.default.removeItem(at: backup)
         }
 
-        let replay = expectation(description: "history replayed")
+        let replay = expectation(description: "history read without a write")
         let live = expectation(description: "next append is live")
         let deltas = LockedValue<[ConversationTailDelta]>([])
         let tailer = JSONLTailer(
@@ -558,7 +558,7 @@ final class JSONLTailerTests: XCTestCase {
         wait(for: [live], timeout: 2)
         tailer.detach(sessionId: "s1")
 
-        XCTAssertEqual(deltas.value.map(\.replaysWholeFile), [true, false])
+        XCTAssertEqual(deltas.value.map(\.lastAssistantMessage), ["history", "news"])
     }
 
     // MARK: - Attach offset shared with the backfill

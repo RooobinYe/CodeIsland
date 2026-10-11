@@ -40,14 +40,8 @@ struct PersistedSession: Codable {
     /// still hold a lexicographically sorted list from the pre-cap `Set.sorted()`
     /// encoder — restore keeps all entries (no fake-recency trim).
     let closedSubagentIds: [String]?
-    /// The agent's checklist, so a relaunch mid-plan keeps showing progress
-    /// before the transcript backfill finishes. nil when empty (and in files
-    /// written before the field existed).
-    var agentTasks: AgentTaskList? = nil
-    // Session recap + reasoning effort. Defaulted so older files (and call
-    // sites) without them keep decoding/compiling; restore is re-checked
-    // against the transcript by the attach-time backfill.
-    var recap: SessionRecap? = nil
+    /// Reasoning effort. Defaulted so older files (and call sites) without it
+    /// keep decoding/compiling.
     var reasoningEffort: String? = nil
     /// Claude Desktop Code-tab session id, so a restored card still opens its
     /// exact session. Defaulted like the fields above for older files.
@@ -130,8 +124,6 @@ enum SessionPersistence {
                 lastActivity: s.lastActivity,
                 transcriptPath: s.transcriptPath,
                 closedSubagentIds: s.closedSubagentIds.isEmpty ? nil : s.closedSubagentIds,
-                agentTasks: s.agentTasks.isEmpty ? nil : s.agentTasks,
-                recap: s.recap,
                 reasoningEffort: s.reasoningEffort,
                 claudeDesktopSessionId: s.claudeDesktopSessionId,
                 hermesChatElsewhere: s.hermesChatElsewhere ? true : nil

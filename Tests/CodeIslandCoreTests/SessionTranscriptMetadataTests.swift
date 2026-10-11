@@ -1,20 +1,11 @@
 import XCTest
 @testable import CodeIslandCore
 
-/// Claude Code's `away_summary` recap and the transcript-derived model label:
-/// parsing, the byte-probe gate, staleness, and how snapshots absorb them.
-final class SessionRecapTests: XCTestCase {
+/// The transcript-derived model label: parsing, the byte-probe gate, and how
+/// snapshots absorb it.
+final class SessionTranscriptMetadataTests: XCTestCase {
 
     // MARK: - Fixtures (shapes copied from real CLI 2.1.26x transcripts)
-
-    private func recapLine(
-        _ content: String,
-        timestamp: String = "2026-09-12T03:35:41.545Z",
-        sidechain: Bool = false
-    ) -> String {
-        let escaped = content.replacingOccurrences(of: "\"", with: "\\\"")
-        return #"{"parentUuid":"p1","isSidechain":\#(sidechain),"type":"system","subtype":"away_summary","content":"\#(escaped)","timestamp":"\#(timestamp)","uuid":"u1","isMeta":false,"userType":"external","entrypoint":"cli","cwd":"/repo","sessionId":"s1","version":"2.1.267","gitBranch":"main"}"#
-    }
 
     private func systemLine(subtype: String) -> String {
         #"{"parentUuid":"p1","isSidechain":false,"type":"system","subtype":"\#(subtype)","durationMs":1234,"timestamp":"2026-09-12T03:30:00.000Z","uuid":"u2","isMeta":false}"#
@@ -45,57 +36,10 @@ final class SessionRecapTests: XCTestCase {
         JSONLTailer.scanLines(Data((lines.joined(separator: "\n") + "\n").utf8)).delta
     }
 
-    // MARK: - SessionRecap parsing
-
-    func testCleanedTextDropsTheConfigHint() {
-        XCTAssertEqual(
-            SessionRecap.cleanedText("Committed and deployed. Next: decide on backups. (disable recaps in /config)"),
-            "Committed and deployed. Next: decide on backups."
-        )
-    }
-
-    func testCleanedTextKeepsOrdinaryTrailingParentheticals() {
-        XCTAssertEqual(
-            SessionRecap.cleanedText("  Fix shipped (commit 11be844)  "),
-            "Fix shipped (commit 11be844)"
-        )
-        XCTAssertNil(SessionRecap.cleanedText("   "))
-        XCTAssertNil(SessionRecap.cleanedText(nil))
-        XCTAssertNil(SessionRecap.cleanedText("(disable recaps in /config)"))
-    }
-
-    func testRecapFromTranscriptLineUsesItsTimestamp() throws {
-        let json = try XCTUnwrap(
-            JSONSerialization.jsonObject(with: Data(recapLine("All tests pass.").utf8)) as? [String: Any]
-        )
-        let recap = try XCTUnwrap(SessionRecap.from(transcriptLine: json))
-        XCTAssertEqual(recap.text, "All tests pass.")
-        XCTAssertEqual(recap.createdAt, TranscriptTimestamp.parse("2026-09-12T03:35:41.545Z"))
-    }
-
-    func testRecapIgnoresOtherSubtypesAndSidechains() throws {
-        let other = try XCTUnwrap(
-            JSONSerialization.jsonObject(with: Data(systemLine(subtype: "turn_duration").utf8)) as? [String: Any]
-        )
-        XCTAssertNil(SessionRecap.from(transcriptLine: other))
-        let sidechain = try XCTUnwrap(
-            JSONSerialization.jsonObject(with: Data(recapLine("x", sidechain: true).utf8)) as? [String: Any]
-        )
-        XCTAssertNil(SessionRecap.from(transcriptLine: sidechain))
-    }
-
-    func testPromptAtOrAfterTheRecapSupersedesIt() {
-        let recap = SessionRecap(text: "r", createdAt: Date(timeIntervalSince1970: 100))
-        XCTAssertTrue(recap.isSuperseded(byPromptAt: Date(timeIntervalSince1970: 100)))
-        XCTAssertTrue(recap.isSuperseded(byPromptAt: Date(timeIntervalSince1970: 101)))
-        XCTAssertFalse(recap.isSuperseded(byPromptAt: Date(timeIntervalSince1970: 99)))
-    }
-
     // MARK: - Byte probe
 
-    func testProbeLetsOnlyRecapSystemRowsThrough() {
-        XCTAssertEqual(JSONLTailer.quickTypeProbe(lineBytes: Data(recapLine("r").utf8)), .claudeRecap)
-        for subtype in ["turn_duration", "stop_hook_summary", "compact_boundary", "local_command"] {
+    func testProbeSkipsSystemRows() {
+        for subtype in ["away_summary", "turn_duration", "stop_hook_summary", "compact_boundary", "local_command"] {
             XCTAssertEqual(
                 JSONLTailer.quickTypeProbe(lineBytes: Data(systemLine(subtype: subtype).utf8)),
                 .irrelevant,
@@ -111,53 +55,20 @@ final class SessionRecapTests: XCTestCase {
         )
     }
 
-    // MARK: - scanLines: recap
-
-    func testScanPicksUpARecap() {
-        let delta = scan([userLine("ship it"), assistantLine(model: "claude-opus-5-5"), recapLine("Shipped. (disable recaps in /config)")])
-        XCTAssertEqual(delta.sessionRecap?.text, "Shipped.")
-        XCTAssertFalse(delta.isEmpty)
-    }
-
-    func testRecapOnlyChunkIsNotEmpty() {
-        let delta = scan([recapLine("Idle recap")])
-        XCTAssertEqual(delta.sessionRecap?.text, "Idle recap")
-        XCTAssertFalse(delta.isEmpty)
-        XCTAssertFalse(delta.hasActivity, "a recap is not agent activity")
-    }
-
-    func testPromptAfterRecapInTheSameChunkSupersedesIt() {
-        let delta = scan([recapLine("old recap"), userLine("next task")])
-        XCTAssertNil(delta.sessionRecap)
-        XCTAssertEqual(delta.lastUserPrompt, "next task")
-    }
-
-    func testRecapAfterPromptInTheSameChunkSurvives() {
-        let delta = scan([userLine("task"), assistantLine(model: "claude-opus-5-5"), recapLine("new recap")])
-        XCTAssertEqual(delta.sessionRecap?.text, "new recap")
-        XCTAssertEqual(delta.lastUserPrompt, "task")
-    }
-
-    func testToolResultUserRowsDoNotSupersedeARecap() {
-        let toolResult = #"{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","content":"ok"}]}}"#
-        let delta = scan([recapLine("recap"), toolResult])
-        XCTAssertEqual(delta.sessionRecap?.text, "recap")
-    }
+    // MARK: - scanLines: slash commands
 
     // Slash-command rows as CLI 2.1.2xx writes them: plain user rows, isMeta false.
     private let modelCommandLine = #"{"parentUuid":"p1","isSidechain":false,"type":"user","message":{"role":"user","content":"<command-name>/model</command-name>\n            <command-message>model</command-message>\n            <command-args></command-args>"},"uuid":"u5","timestamp":"2026-09-12T03:41:00.000Z"}"#
     private let modelOutputLine = #"{"parentUuid":"u5","isSidechain":false,"type":"user","message":{"role":"user","content":"<local-command-stdout>Set model to `Opus 5 (1M context) (default)` and saved as your default for new sessions</local-command-stdout>"},"uuid":"u6","timestamp":"2026-09-12T03:41:00.100Z"}"#
     private let skillCommandLine = #"{"parentUuid":"p1","isSidechain":false,"type":"user","message":{"role":"user","content":"<command-message>design</command-message>\n<command-name>/design</command-name>\n<command-args>tidy the settings layout</command-args>"},"uuid":"u7","timestamp":"2026-09-12T03:42:00.000Z"}"#
 
-    func testLocalSlashCommandsNeitherClearTheRecapNorBecomeThePrompt() {
-        let delta = scan([recapLine("Shipped v2."), modelCommandLine, modelOutputLine])
-        XCTAssertEqual(delta.sessionRecap?.text, "Shipped v2.")
+    func testLocalSlashCommandsDoNotBecomeThePrompt() {
+        let delta = scan([modelCommandLine, modelOutputLine])
         XCTAssertNil(delta.lastUserPrompt)
     }
 
     func testAPromptCommandStartsATurnAndReadsAsTyped() {
-        let delta = scan([recapLine("Shipped v2."), skillCommandLine])
-        XCTAssertNil(delta.sessionRecap)
+        let delta = scan([skillCommandLine])
         XCTAssertEqual(delta.lastUserPrompt, "/design tidy the settings layout")
     }
 
@@ -167,16 +78,6 @@ final class SessionRecapTests: XCTestCase {
         XCTAssertEqual(JSONLTailer.claudeCommandEcho("<command-message>review</command-message>\n<command-name>review</command-name>"), .prompt("/review"))
         XCTAssertNil(JSONLTailer.claudeCommandEcho("<pasted_content id=\"1\">x</pasted_content> what is this?"))
         XCTAssertNil(JSONLTailer.claudeCommandEcho("fix the <command-name> parser"))
-    }
-
-    func testLocalSlashCommandsStartNoChecklistTurn() throws {
-        func events(_ line: String) throws -> [AgentTaskEvent] {
-            let json = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any])
-            return AgentTaskTranscript.events(fromLine: json)
-        }
-        XCTAssertEqual(try events(modelCommandLine), [])
-        XCTAssertEqual(try events(modelOutputLine), [])
-        XCTAssertEqual(try events(skillCommandLine), [.newTurn])
     }
 
     // MARK: - scanLines: model observation
@@ -222,45 +123,25 @@ final class SessionRecapTests: XCTestCase {
 
     // MARK: - Snapshot: live tail semantics
 
-    private func delta(
-        prompt: String? = nil,
-        recap: SessionRecap? = nil,
-        model: ModelObservation? = nil
-    ) -> ConversationTailDelta {
+    private func delta(model: ModelObservation? = nil) -> ConversationTailDelta {
         ConversationTailDelta(
             sessionId: "s1",
-            lastUserPrompt: prompt,
+            lastUserPrompt: nil,
             lastAssistantMessage: nil,
-            sessionRecap: recap,
             modelObservation: model
         )
     }
 
-    func testLiveRecapIsAdoptedWithoutTouchingLastActivity() {
+    func testLiveModelIsAdoptedWithoutTouchingLastActivity() {
         let lastActivity = Date(timeIntervalSince1970: 1_000)
         var session = SessionSnapshot()
         session.lastActivity = lastActivity
-        let recap = SessionRecap(text: "r", createdAt: Date())
+        let model = ModelObservation(model: "claude-opus-5-5", effort: "xhigh")
 
-        XCTAssertTrue(session.applyTranscriptMetadata(from: delta(recap: recap)))
-        XCTAssertEqual(session.recap, recap)
+        XCTAssertTrue(session.applyTranscriptMetadata(from: delta(model: model)))
         XCTAssertEqual(session.lastActivity, lastActivity)
-        XCTAssertFalse(session.applyTranscriptMetadata(from: delta(recap: recap)), "unchanged recap is a no-op")
-    }
-
-    func testLivePromptClearsTheRecap() {
-        var session = SessionSnapshot()
-        session.recap = SessionRecap(text: "r", createdAt: Date())
-        XCTAssertTrue(session.applyTranscriptMetadata(from: delta(prompt: "next")))
-        XCTAssertNil(session.recap)
-    }
-
-    func testLiveChunkWithoutPromptOrRecapKeepsTheRecap() {
-        var session = SessionSnapshot()
-        let recap = SessionRecap(text: "r", createdAt: Date())
-        session.recap = recap
+        XCTAssertFalse(session.applyTranscriptMetadata(from: delta(model: model)), "unchanged model is a no-op")
         XCTAssertFalse(session.applyTranscriptMetadata(from: delta(model: nil)))
-        XCTAssertEqual(session.recap, recap)
     }
 
     func testLiveModelKeepsTheContextVariantAndTracksEffort() {
@@ -281,22 +162,6 @@ final class SessionRecapTests: XCTestCase {
     }
 
     // MARK: - Snapshot: attach-time backfill
-
-    func testBackfillIsAuthoritativeForTheRecap() {
-        var session = SessionSnapshot()
-        session.recap = SessionRecap(text: "persisted", createdAt: Date(timeIntervalSince1970: 1))
-
-        let superseded = scan([recapLine("persisted"), userLine("typed while CodeIsland was closed")])
-        XCTAssertTrue(session.applyTranscriptBackfill(superseded))
-        XCTAssertNil(session.recap)
-
-        let fresh = scan([userLine("task"), recapLine("fresh")])
-        XCTAssertTrue(session.applyTranscriptBackfill(fresh))
-        XCTAssertEqual(session.recap?.text, "fresh")
-
-        XCTAssertTrue(session.applyTranscriptBackfill(scan([assistantLine(model: "claude-opus-5-5")])))
-        XCTAssertNil(session.recap, "no recap in the tail means none is current")
-    }
 
     private func timedAssistantLine(model: String, effort: String, at timestamp: String) -> String {
         #"{"parentUuid":"p1","isSidechain":false,"message":{"model":"\#(model)","id":"msg_1","type":"message","role":"assistant","content":[{"type":"text","text":"ok"}]},"type":"assistant","uuid":"u4","timestamp":"\#(timestamp)","effort":"\#(effort)"}"#
@@ -383,53 +248,11 @@ final class SessionRecapTests: XCTestCase {
         XCTAssertEqual(session.model, "claude-opus-5[1m]")
     }
 
-    func testScanFileTailReadsOnlyTheWindowAndSurvivesACutFirstLine() throws {
-        let url = FileManager.default.temporaryDirectory
-            .appendingPathComponent("codeisland-recap-tail-\(UUID().uuidString).jsonl")
-        defer { try? FileManager.default.removeItem(at: url) }
-        let padding = assistantLine(model: "claude-opus-4-8", text: String(repeating: "x", count: 4_000))
-        let body = [padding, userLine("go"), assistantLine(model: "claude-opus-5-5", effort: "high"), recapLine("Tail recap")]
-            .joined(separator: "\n") + "\n"
-        try body.write(to: url, atomically: true, encoding: .utf8)
-
-        let tail = try XCTUnwrap(JSONLTailer.scanFileTail(path: url.path, maxBytes: 1_500))
-        XCTAssertEqual(tail.sessionRecap?.text, "Tail recap")
-        XCTAssertEqual(tail.modelObservation, ModelObservation(model: "claude-opus-5-5", effort: "high"))
-        XCTAssertNil(JSONLTailer.scanFileTail(path: url.path + ".missing"))
-    }
-
     // MARK: - Reducer
 
     private func hookEvent(_ payload: [String: Any]) throws -> HookEvent {
         let data = try JSONSerialization.data(withJSONObject: payload)
         return try XCTUnwrap(HookEvent(from: data))
-    }
-
-    func testUserPromptSubmitHookClearsTheRecapButOtherEventsKeepIt() throws {
-        var session = SessionSnapshot()
-        session.recap = SessionRecap(text: "r", createdAt: Date().addingTimeInterval(-60))
-        var sessions = ["s1": session]
-
-        _ = reduceEvent(sessions: &sessions, event: try hookEvent([
-            "hook_event_name": "Notification", "session_id": "s1", "message": "idle",
-        ]), maxHistory: 10)
-        XCTAssertNotNil(sessions["s1"]?.recap)
-
-        _ = reduceEvent(sessions: &sessions, event: try hookEvent([
-            "hook_event_name": "UserPromptSubmit", "session_id": "s1", "prompt": "next",
-        ]), maxHistory: 10)
-        XCTAssertNil(sessions["s1"]?.recap)
-    }
-
-    func testVisibleRecapOnlyWhileIdle() {
-        var session = SessionSnapshot()
-        session.recap = SessionRecap(text: "r", createdAt: Date())
-        session.status = .idle
-        XCTAssertNotNil(session.visibleRecap)
-        for status in [AgentStatus.processing, .running, .waitingApproval, .waitingQuestion] {
-            session.status = status
-            XCTAssertNil(session.visibleRecap, "\(status)")
-        }
     }
 
     // MARK: - Subagent models
@@ -480,33 +303,5 @@ final class SessionRecapTests: XCTestCase {
         XCTAssertNil(SubagentState.claudeTranscriptPath(parentTranscriptPath: "/u/x.json", agentId: "a1"))
         XCTAssertNil(SubagentState.claudeTranscriptPath(parentTranscriptPath: "/u/x.jsonl", agentId: "../a1"))
         XCTAssertNil(SubagentState.claudeTranscriptPath(parentTranscriptPath: "/u/x.jsonl", agentId: ""))
-    }
-
-    // MARK: - Hot path
-
-    func testRecapAwareProbeKeepsTheRealisticMixFast() {
-        // Every Claude turn ends with turn_duration + stop_hook_summary rows;
-        // they must stay on the no-parse path now that `system` is a probe case.
-        let mix = [
-            userLine("q"),
-            assistantLine(model: "claude-opus-5-5", effort: "xhigh"),
-            systemLine(subtype: "turn_duration"),
-            systemLine(subtype: "stop_hook_summary"),
-            #"{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","content":"\#(String(repeating: "y", count: 800))"}]}}"#,
-            recapLine("r"),
-        ]
-        var blob = Data()
-        while blob.count < 1_000_000 {
-            for line in mix {
-                blob.append(contentsOf: line.utf8)
-                blob.append(0x0A)
-            }
-        }
-        let start = Date()
-        let delta = JSONLTailer.scanLines(blob).delta
-        let elapsedMs = Date().timeIntervalSince(start) * 1000
-        print("[bench] scanLines recap mix \(blob.count) bytes: \(String(format: "%.2f", elapsedMs))ms")
-        XCTAssertEqual(delta.sessionRecap?.text, "r")
-        XCTAssertLessThan(elapsedMs, 5_000)
     }
 }

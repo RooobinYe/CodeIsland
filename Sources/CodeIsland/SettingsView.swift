@@ -1197,8 +1197,6 @@ private struct AppearancePage: View {
     @AppStorage(SettingsKey.aiMessageLines) private var aiMessageLines = SettingsDefaults.aiMessageLines
     @AppStorage(SettingsKey.showAgentDetails) private var showAgentDetails = SettingsDefaults.showAgentDetails
     @AppStorage(SettingsKey.showGitBranch) private var showGitBranch = SettingsDefaults.showGitBranch
-    @AppStorage(SettingsKey.showTaskProgress) private var showTaskProgress = SettingsDefaults.showTaskProgress
-    @AppStorage(SettingsKey.showSessionRecap) private var showSessionRecap = SettingsDefaults.showSessionRecap
     @AppStorage(SettingsKey.showModelLabel) private var showModelLabel = SettingsDefaults.showModelLabel
     @AppStorage(SettingsKey.showProjectName) private var showProjectName = SettingsDefaults.showProjectName
     @AppStorage(SettingsKey.collapsedWidthScale) private var collapsedWidthScale = SettingsDefaults.collapsedWidthScale
@@ -1287,18 +1285,6 @@ private struct AppearancePage: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Toggle(l10n["show_git_branch"], isOn: $showGitBranch)
                     Text(l10n["show_git_branch_desc"])
-                        .font(.system(size: 11))
-                        .foregroundStyle(.tertiary)
-                }
-                VStack(alignment: .leading, spacing: 2) {
-                    Toggle(l10n["show_task_progress"], isOn: $showTaskProgress)
-                    Text(l10n["show_task_progress_desc"])
-                        .font(.system(size: 11))
-                        .foregroundStyle(.tertiary)
-                }
-                VStack(alignment: .leading, spacing: 2) {
-                    Toggle(l10n["show_session_recap"], isOn: $showSessionRecap)
-                    Text(l10n["show_session_recap_desc"])
                         .font(.system(size: 11))
                         .foregroundStyle(.tertiary)
                 }

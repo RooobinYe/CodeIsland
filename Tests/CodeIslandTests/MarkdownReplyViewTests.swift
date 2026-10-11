@@ -77,10 +77,10 @@ final class MarkdownReplyViewTests: XCTestCase {
 
     func testCompletionReplyGetsWhatTheRestOfTheCardLeavesInTheWindow() {
         let margin = CompletionReplyMetrics.bottomMargin
-        // Card chrome measured at 230pt (notch 38, font 16, task progress,
+        // Card chrome measured at 230pt (notch 38, font 16, older replies,
         // "2 sessions" link…): the reply may use the other 280 − margin.
         XCTAssertEqual(replyMaxHeight(chrome: 230), 510 - 230 - margin)
-        // More chrome (an expanded task list, a recap) → less reply.
+        // More chrome (more older replies) → less reply.
         XCTAssertEqual(replyMaxHeight(chrome: 330), 510 - 330 - margin)
         // The window is already clamped to the screen; a shorter one shrinks the reply.
         XCTAssertEqual(replyMaxHeight(window: 400, chrome: 230), 400 - 230 - margin)
@@ -163,17 +163,6 @@ final class MarkdownReplyViewTests: XCTestCase {
         XCTAssertEqual(CompletionReplyMetrics.olderReplyLineLimit(2), 2)
         XCTAssertEqual(CompletionReplyMetrics.olderReplyLineLimit(5), 2)
         XCTAssertEqual(CompletionReplyMetrics.olderReplyLineLimit(nil), 2, "unlimited setting")
-    }
-
-    func testExpandedTaskListScrollsPastSixRows() {
-        let visible = AgentTaskProgressView.visibleListedItems
-        XCTAssertNil(AgentTaskProgressView.listViewportHeight(itemCount: visible, lineHeight: 13))
-        let height = try? XCTUnwrap(AgentTaskProgressView.listViewportHeight(itemCount: 40, lineHeight: 13))
-        XCTAssertEqual(height, ((CGFloat(visible) + 0.5) * 16).rounded(), "six and a half rows, whatever the list length")
-        XCTAssertEqual(
-            AgentTaskProgressView.listViewportHeight(itemCount: 500, lineHeight: 13), height,
-            "a runaway list is capped too"
-        )
     }
 
     func testPanelHeightMatchesTheSessionListBudget() {

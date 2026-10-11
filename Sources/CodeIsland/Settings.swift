@@ -67,7 +67,6 @@ enum SettingsKey {
 
     // Session cards
     static let showGitBranch = "showGitBranch"
-    static let showSessionRecap = "showSessionRecap"
     static let showModelLabel = "showModelLabel"
 
     // Completion notification: "expand" | "glance" | "off". Successor of the
@@ -87,8 +86,6 @@ enum SettingsKey {
 
     // Advanced
     static let maxToolHistory = "maxToolHistory"
-    /// Session cards: agent checklist progress (TaskCreate / TodoWrite / update_plan).
-    static let showTaskProgress = "showTaskProgress"
 
     // Tool status display
 
@@ -156,13 +153,11 @@ struct SettingsDefaults {
     static let followUpReminderMinutes = 0
     static let autoMuteWhenAway = true
     static let showGitBranch = true
-    static let showSessionRecap = true
     static let showModelLabel = false
 
     static let rotationInterval = 5
 
     static let maxToolHistory = 20
-    static let showTaskProgress = true
 
 
 
@@ -227,11 +222,9 @@ class SettingsManager {
             SettingsKey.followUpReminderMinutes: SettingsDefaults.followUpReminderMinutes,
             SettingsKey.autoMuteWhenAway: SettingsDefaults.autoMuteWhenAway,
             SettingsKey.showGitBranch: SettingsDefaults.showGitBranch,
-            SettingsKey.showSessionRecap: SettingsDefaults.showSessionRecap,
             SettingsKey.showModelLabel: SettingsDefaults.showModelLabel,
             SettingsKey.rotationInterval: SettingsDefaults.rotationInterval,
             SettingsKey.maxToolHistory: SettingsDefaults.maxToolHistory,
-            SettingsKey.showTaskProgress: SettingsDefaults.showTaskProgress,
             SettingsKey.collapsedWidthScale: SettingsDefaults.collapsedWidthScale,
             SettingsKey.excludedHookCwdSubstrings: SettingsDefaults.excludedHookCwdSubstrings,
             SettingsKey.claudeConfigDir: SettingsDefaults.claudeConfigDir,

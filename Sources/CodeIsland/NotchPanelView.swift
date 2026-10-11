@@ -72,8 +72,6 @@ struct NotchPanelView: View {
     @AppStorage(SettingsKey.collapsedWidthScale) private var collapsedWidthScale = SettingsDefaults.collapsedWidthScale
     @AppStorage(SettingsKey.hapticOnHover) private var hapticOnHover = SettingsDefaults.hapticOnHover
     @AppStorage(SettingsKey.hapticIntensity) private var hapticIntensity = SettingsDefaults.hapticIntensity
-    @AppStorage(SettingsKey.showSessionRecap) private var showSessionRecap = SettingsDefaults.showSessionRecap
-    @AppStorage(SettingsKey.showProjectName) private var showProjectName = SettingsDefaults.showProjectName
 
     /// Grace before a mouse-out closes the island (and the idle indicator's un-hover).
     @State private var hoverTimer: Timer?
@@ -109,14 +107,6 @@ struct NotchPanelView: View {
     /// hidden island closes into before its window goes away.
     private var isNotchShell: Bool {
         !showBar && !showIdleIndicator
-    }
-    private var collapsedRecapTooltip: String {
-        guard showSessionRecap, !shouldShowExpanded else { return "" }
-        let sid = appState.rotatingSessionId ?? appState.activeSessionId ?? appState.sessions.keys.sorted().first
-        return SessionMetadataStyle.collapsedRecapTooltip(
-            for: sid.flatMap { appState.sessions[$0] },
-            showProjectName: showProjectName
-        )
     }
 
     /// Mascot size — fits within the menu bar height
@@ -212,10 +202,6 @@ struct NotchPanelView: View {
                         CompactRightWing(appState: appState, expanded: shouldShowExpanded, hasNotch: hasNotch)
                     }
                     .frame(height: notchHeight)
-                    // Recap on hover while collapsed — shows whenever hover
-                    // doesn't expand the panel (smart suppress with the
-                    // terminal frontmost); expanded cards show it inline.
-                    .help(collapsedRecapTooltip)
                     // 0 while expanded (only the collapsed wing reports) — keep
                     // the last width for the next collapse.
                     .onPreferenceChange(CompactRightWingWidthKey.self) { if $0 > 0 { rightWingWidth = $0 } }
@@ -656,8 +642,8 @@ enum SessionListMetrics {
     }
 
     /// Scroll once there are more sessions than the setting shows — or fewer,
-    /// but taller than the room budgeted for them: cards with a task list, an
-    /// approval row or a recap run well past 90pt each, and four of them used
+    /// but taller than the room budgeted for them: cards with an approval row
+    /// or a long reply run well past 90pt each, and four of them used
     /// to push the list and its footer off the bottom of the window with no
     /// way to reach them.
     ///
@@ -1088,8 +1074,6 @@ private struct SessionCard: View {
     @AppStorage(SettingsKey.aiMessageLines) private var aiMessageLines = SettingsDefaults.aiMessageLines
     @AppStorage(SettingsKey.showAgentDetails) private var showAgentDetails = SettingsDefaults.showAgentDetails
     @AppStorage(SettingsKey.autoCollapseAfterSessionJump) private var autoCollapseAfterSessionJump = SettingsDefaults.autoCollapseAfterSessionJump
-    @AppStorage(SettingsKey.showTaskProgress) private var showTaskProgress = SettingsDefaults.showTaskProgress
-    @AppStorage(SettingsKey.showSessionRecap) private var showSessionRecap = SettingsDefaults.showSessionRecap
     @AppStorage(SettingsKey.showModelLabel) private var showModelLabel = SettingsDefaults.showModelLabel
     @AppStorage(SettingsKey.showProjectName) private var showProjectName = SettingsDefaults.showProjectName
     private var fontSize: CGFloat { CGFloat(contentFontSize) }
@@ -1157,34 +1141,12 @@ private struct SessionCard: View {
                     cursorQuestionBlock
                 }
 
-                // Agent checklist progress (TaskCreate / TodoWrite / update_plan).
-                if showTaskProgress && !session.agentTasks.isEmpty {
-                    AgentTaskProgressView(tasks: session.agentTasks, fontSize: fontSize, agentIsIdle: session.status == .idle)
-                }
-
                 // Session title: first user prompt (hide when detailed mode shows chat history)
                 if let prompt = session.lastUserPrompt, session.recentMessages.isEmpty {
                     SessionGlyphLine(kind: .prompt, text: prompt, fontSize: fontSize)
                 }
 
                 chatAndLiveRows
-
-                // Claude Code's idle recap — the newest thing in an idle session,
-                // so it sits under the chat rows. visibleRecap is nil while working.
-                if showSessionRecap, let recap = session.visibleRecap {
-                    SessionRecapRow(
-                        text: recap.text,
-                        fontSize: fontSize,
-                        lineLimit: isCompletion
-                            ? CompletionReplyMetrics.recapLineLimit
-                            : aiLineLimit.map { max($0, 2) }
-                    )
-                    .equatable()
-                    // On the completion card the reply's scroll area is sized
-                    // around this row; squeezed to one line it would be measured
-                    // short and never get its second line back.
-                    .fixedSize(horizontal: false, vertical: isCompletion)
-                }
             }
         }
         .padding(.leading, 14)
@@ -1393,8 +1355,8 @@ private struct SessionCard: View {
     }
 
     /// One line. A session that needs you shows its prompt here and its
-    /// request below; a working one its tool; a resting one the newest of
-    /// recap / reply / prompt.
+    /// request below; a working one its tool; a resting one its reply, or
+    /// failing that its prompt.
     @ViewBuilder
     private var compactActivity: some View {
         if cardStatus == .needsYou {
@@ -1418,9 +1380,6 @@ private struct SessionCard: View {
             } else if liveRow == .thinking {
                 TypingIndicator(fontSize: max(10, fontSize - 1), label: L10n.shared["typing_thinking"])
             }
-        } else if showSessionRecap, let recap = session.visibleRecap {
-            // Written after the reply, as a summary of where things stand.
-            SessionGlyphLine(kind: .recap, text: recap.text, fontSize: max(10, fontSize - 1))
         } else if let reply = session.lastAssistantMessage {
             SessionGlyphLine(kind: .reply, text: reply, fontSize: max(10, fontSize - 1))
         } else if let prompt = session.lastUserPrompt {
@@ -1451,7 +1410,6 @@ private struct SessionCard: View {
         CompactSessionRowMetrics.tooltip(
             name: session.headline(showProjectName: showProjectName).text,
             latest: session.lastAssistantMessage.map(stripDirectives)
-                ?? session.visibleRecap?.text
                 ?? session.lastUserPrompt
         )
     }
@@ -1590,12 +1548,11 @@ struct SessionToolChip: View {
 }
 
 /// The glyphs that tell chat lines apart: `›` your prompt, `●` the agent's
-/// reply, `↻` a recap. Each sits in a box one monospaced character wide, so
+/// reply. Each sits in a box one monospaced character wide, so
 /// the text after it starts at the same x whatever the glyph.
 enum SessionGlyph {
     static let prompt = "›"
     static let reply = "●"
-    static let recap = "↻"
     static let promptColor = Color.white.opacity(0.5)
     static let replyColor = Color(red: 0.85, green: 0.47, blue: 0.34)
     /// Your own words, a step quieter than the agent's.
@@ -1604,8 +1561,7 @@ enum SessionGlyph {
     /// it centres on the first line.
     static let replyScale: CGFloat = 0.72
 
-    /// One monospaced character: the glyph column's width. `↻` has no glyph
-    /// in SF Mono and falls back to a narrower font.
+    /// One monospaced character: the glyph column's width.
     static func columnWidth(_ fontSize: CGFloat) -> CGFloat {
         let font = NSFont.monospacedSystemFont(ofSize: fontSize, weight: .bold)
         return ("M" as NSString).size(withAttributes: [.font: font]).width.rounded(.up)
@@ -1614,13 +1570,12 @@ enum SessionGlyph {
     /// What VoiceOver says for each glyph instead of its Unicode name.
     static var promptSpoken: String { L10n.shared["session_a11y_prompt"] }
     static var replySpoken: String { L10n.shared["session_a11y_reply"] }
-    static var recapSpoken: String { L10n.shared["session_recap"] }
 }
 
 /// One line led by a glyph — the prompt line on a full card, and the latest
 /// activity on a compact row.
 private struct SessionGlyphLine: View {
-    enum Kind { case prompt, reply, recap }
+    enum Kind { case prompt, reply }
     let kind: Kind
     let text: String
     let fontSize: CGFloat
@@ -1637,12 +1592,6 @@ private struct SessionGlyphLine: View {
                     .truncationMode(.tail)
             case .reply:
                 AssistantReplyText(text: stripDirectives(text), fontSize: fontSize, lineLimit: 1)
-            case .recap:
-                Text(text)
-                    .font(.system(size: fontSize, design: .monospaced))
-                    .foregroundStyle(.white.opacity(0.55))
-                    .lineLimit(1)
-                    .truncationMode(.tail)
             }
         }
     }
@@ -1658,9 +1607,6 @@ private struct SessionGlyphLine: View {
                 Text(SessionGlyph.reply).font(font).foregroundStyle(SessionGlyph.replyColor)
                     .scaleEffect(SessionGlyph.replyScale)
                     .accessibilityLabel(SessionGlyph.replySpoken)
-            case .recap:
-                Text(SessionGlyph.recap).font(font).foregroundStyle(SessionMetadataStyle.recapAccent)
-                    .accessibilityLabel(SessionGlyph.recapSpoken)
             }
         }
         .frame(width: SessionGlyph.columnWidth(fontSize))
@@ -2270,47 +2216,6 @@ private func subagentTooltipText(_ sub: SubagentState, showModel: Bool = false) 
         }
     }
     return detail.isEmpty ? typeLabel : "\(typeLabel) — \(detail)"
-}
-
-// MARK: - Session metadata (recap + model tag)
-
-enum SessionMetadataStyle {
-    /// Recap glyph tint — distinct from the green ">" user and orange "$"
-    /// reply markers so a recap never reads as the agent speaking.
-    static let recapAccent = Color(red: 0.6, green: 0.68, blue: 1.0)
-
-    /// Tooltip for the collapsed bar: the displayed idle session's recap,
-    /// headed like its card — so with "Show project name" off it names the
-    /// session title (or the agent), never the folder.
-    static func collapsedRecapTooltip(for session: SessionSnapshot?, showProjectName: Bool) -> String {
-        guard let session, let recap = session.visibleRecap else { return "" }
-        return "↻ \(session.headline(showProjectName: showProjectName).text)\n\(recap.text)"
-    }
-}
-
-/// Claude Code's "while you were away" recap on an idle card: a ↻ marker and
-/// secondary-colored text, set apart from the "●" reply rows.
-private struct SessionRecapRow: View, Equatable {
-    let text: String
-    let fontSize: CGFloat
-    let lineLimit: Int?
-
-    var body: some View {
-        HStack(alignment: .top, spacing: 5) {
-            Text(SessionGlyph.recap)
-                .font(.system(size: fontSize, weight: .bold, design: .monospaced))
-                .foregroundStyle(SessionMetadataStyle.recapAccent)
-                .frame(width: SessionGlyph.columnWidth(fontSize))
-            Text(text)
-                .font(.system(size: fontSize, design: .monospaced))
-                .foregroundStyle(.white.opacity(0.55))
-                .lineLimit(lineLimit)
-                .truncationMode(.tail)
-        }
-        .help(text)
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(L10n.shared["session_recap"]): \(text)")
-    }
 }
 
 /// Strip internal directives (::code-comment{}, ::git-*{}, etc.) from message text

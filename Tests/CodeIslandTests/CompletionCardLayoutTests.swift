@@ -5,8 +5,8 @@ import XCTest
 import CodeIslandCore
 
 /// The completion card has to fit the panel window: whatever sits around the
-/// reply (task progress, the "N sessions" link, a recap, older replies, a
-/// taller notch, a larger font) comes out of the reply's scroll area, never
+/// reply (the "N sessions" link, older replies, a taller notch, a larger
+/// font) comes out of the reply's scroll area, never
 /// off the bottom of the window.
 ///
 /// Renders the real panel in an offscreen window and reads the pixels: the
@@ -16,8 +16,7 @@ import CodeIslandCore
 final class CompletionCardLayoutTests: XCTestCase {
     private let keys = [
         SettingsKey.contentFontSize, SettingsKey.aiMessageLines, SettingsKey.maxVisibleSessions,
-        SettingsKey.maxPanelHeight, SettingsKey.showTaskProgress, SettingsKey.showSessionRecap,
-        SettingsKey.showProjectName,
+        SettingsKey.maxPanelHeight, SettingsKey.showProjectName,
         SettingsKey.hideWhenNoSession,
     ]
     private var saved: [String: Any] = [:]
@@ -44,7 +43,7 @@ final class CompletionCardLayoutTests: XCTestCase {
         // Measured before the fix: 184–216pt of chrome against a fixed
         // 180pt estimate, so the bottom of the card was cut.
         UserDefaults.standard.set(16, forKey: SettingsKey.contentFontSize)
-        let gap = try gapUnderPanel(state(tasks: true, recap: true, secondSession: true), notchHeight: 38)
+        let gap = try gapUnderPanel(state(secondSession: true), notchHeight: 38)
         assertCardFillsTheWindow(gap)
     }
 
@@ -52,14 +51,14 @@ final class CompletionCardLayoutTests: XCTestCase {
         // "AI reply lines: unlimited" used to render the previous reply in
         // full above the new one and push the card ~450pt past the window.
         UserDefaults.standard.set(0, forKey: SettingsKey.aiMessageLines)
-        let gap = try gapUnderPanel(state(tasks: true, recap: true, secondSession: true, longOlderReply: true), notchHeight: 32)
+        let gap = try gapUnderPanel(state(secondSession: true, longOlderReply: true), notchHeight: 32)
         assertCardFillsTheWindow(gap)
     }
 
     func testSmallWindowStillHoldsTheWholeCard() throws {
         UserDefaults.standard.set(2, forKey: SettingsKey.maxVisibleSessions)
         UserDefaults.standard.set(14, forKey: SettingsKey.contentFontSize)
-        let gap = try gapUnderPanel(state(tasks: true, recap: true, secondSession: true), notchHeight: 32)
+        let gap = try gapUnderPanel(state(secondSession: true), notchHeight: 32)
         assertCardFillsTheWindow(gap)
     }
 
@@ -68,7 +67,7 @@ final class CompletionCardLayoutTests: XCTestCase {
         // their card. Such a card used to fall back to every session as a
         // completion card, and two completion replies size against each
         // other without settling (#357).
-        let state = state(tasks: false, recap: false, secondSession: true)
+        let state = state(secondSession: true)
         state.surface = .completionCard(sessionId: "gone")
         let noSessions = AppState()
         noSessions.surface = .completionCard(sessionId: "gone")
@@ -82,17 +81,17 @@ final class CompletionCardLayoutTests: XCTestCase {
     }
 
     func testReplyMakesRoomWhenTheCardGrowsWhileOpen() throws {
-        // The reply only re-fits when the rest of the card changes, so a task
-        // list arriving on an open card has to reach it.
-        let state = state(tasks: false, recap: false, secondSession: true)
+        // The reply only re-fits when the rest of the card changes, so an
+        // older reply showing up on an open card has to reach it.
+        let state = state(secondSession: true)
+        let older = try XCTUnwrap(state.sessions["a-card"]?.recentMessages.first)
+        state.sessions["a-card"]?.recentMessages.removeFirst()
         let panel = try PanelHost(state, notchHeight: 32)
         defer { panel.close() }
         panel.settle()
         assertCardFillsTheWindow(try panel.gapUnderPanel())
 
-        state.sessions["a-card"]?.agentTasks = AgentTaskList(items: (1...6).map {
-            AgentTaskItem(id: "t\($0)", title: "Task \($0)", activeForm: "Working on task \($0)", status: .pending)
-        })
+        state.sessions["a-card"]?.recentMessages.insert(older, at: 0)
         panel.settle()
         assertCardFillsTheWindow(try panel.gapUnderPanel())
     }
@@ -118,7 +117,7 @@ final class CompletionCardLayoutTests: XCTestCase {
 
     // MARK: - Fixture
 
-    private func state(tasks: Bool, recap: Bool, secondSession: Bool, longOlderReply: Bool = false) -> AppState {
+    private func state(secondSession: Bool, longOlderReply: Bool = false) -> AppState {
         func session(_ project: String) -> SessionSnapshot {
             var session = SessionSnapshot(startTime: Date().addingTimeInterval(-900))
             session.source = "claude"
@@ -139,22 +138,6 @@ final class CompletionCardLayoutTests: XCTestCase {
         card.addRecentMessage(ChatMessage(isUser: false, text: older))
         card.addRecentMessage(ChatMessage(isUser: true, text: "add a filter bar to the dashboard"))
         card.addRecentMessage(ChatMessage(isUser: false, text: reply))
-        if tasks {
-            card.agentTasks = AgentTaskList(items: (1...10).map { index in
-                AgentTaskItem(
-                    id: "t\(index)",
-                    title: "Task \(index)",
-                    activeForm: "Working on task \(index)",
-                    status: index < 4 ? .completed : (index == 4 ? .inProgress : .pending)
-                )
-            })
-        }
-        if recap {
-            card.recap = SessionRecap(
-                text: "Added a cost-based query planner to /search; p95 went from 820ms to 140ms and every test passes. Next: your call on shipping it.",
-                createdAt: Date()
-            )
-        }
         let state = AppState()
         state.sessions = ["a-card": card]
         if secondSession {

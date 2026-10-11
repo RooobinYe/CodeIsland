@@ -290,22 +290,14 @@ final class SessionPersistenceTests: XCTestCase {
         [
           {"sessionId":"good","source":"claude","startTime":"2026-04-09T10:00:00Z","lastActivity":"2026-04-09T10:01:00Z"},
           {"sessionId":"broken","source":"claude","startTime":"not a date","lastActivity":"2026-04-09T10:01:00Z"},
-          {"sessionId":"future-status","source":"codex","startTime":"2026-04-09T10:00:00Z","lastActivity":"2026-04-09T10:01:00Z",
-           "agentTasks":{"items":[
-             {"id":"step:0","title":"Read","status":"completed"},
-             {"id":"step:1","title":"Patch","status":"blocked_on_review"}
-           ]}}
+          {"sessionId":"future-field","source":"codex","startTime":"2026-04-09T10:00:00Z","lastActivity":"2026-04-09T10:01:00Z",
+           "someFutureField":{"items":[1,2]}}
         ]
         """
 
         let sessions = SessionPersistence.decode(Data(json.utf8))
 
-        XCTAssertEqual(sessions.map(\.sessionId), ["good", "future-status"])
-        XCTAssertEqual(
-            sessions.last?.agentTasks?.items.map(\.status),
-            [.completed, .pending],
-            "a status this build does not know reads as pending"
-        )
+        XCTAssertEqual(sessions.map(\.sessionId), ["good", "future-field"])
     }
 
     func testDecodeOfAFileThatIsNotAListYieldsNothing() {

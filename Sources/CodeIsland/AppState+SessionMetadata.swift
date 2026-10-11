@@ -11,9 +11,19 @@ struct SubagentModelRead {
     var transcriptPath: String?
 }
 
+/// An attach-time search for a Codex rollout's last `turn_context` that is
+/// still running off the main actor.
+struct PendingCodexModelBackfill {
+    /// Tailer attachment the search belongs to; a re-attach supersedes it.
+    let attachmentToken: UUID
+    /// A live line named the model while the search ran; history must not
+    /// overwrite it.
+    var sawLiveModelObservation = false
+}
+
 /// Transcript-derived session metadata that hooks don't carry: a subagent's
-/// own model / reasoning effort. (The session recap and the main thread's
-/// model ride the transcript tailer — see `applyTranscriptDelta`.)
+/// own model / reasoning effort. (The main thread's model rides the
+/// transcript tailer — see `applyTranscriptDelta`.)
 extension AppState {
     /// First wait before re-reading a subagent transcript that has no
     /// assistant turn yet (SubagentStart fires before the first one is
@@ -190,5 +200,55 @@ extension AppState {
         let start = size > UInt64(maxBytes) ? size - UInt64(maxBytes) : 0
         guard (try? handle.seek(toOffset: start)) != nil else { return nil }
         return try? handle.readToEnd()
+    }
+}
+
+extension AppState {
+    /// Look up the last `turn_context` before `endOffset` in a Codex rollout
+    /// without blocking the main actor: the attach-time tail window often
+    /// misses it, leaving the card without its reasoning effort until the next
+    /// turn. `endOffset` is where the tailer starts reading, so anything newer
+    /// arrives live.
+    func startCodexModelBackfill(
+        sessionId: String,
+        path: String,
+        endOffset: UInt64,
+        attachmentToken: UUID
+    ) {
+        guard endOffset > 0 else {
+            pendingCodexModelBackfills.removeValue(forKey: sessionId)
+            return
+        }
+        pendingCodexModelBackfills[sessionId] = PendingCodexModelBackfill(attachmentToken: attachmentToken)
+        Task.detached(priority: .utility) { [weak self] in
+            let codexModel = ModelObservation.latestCodexTurnContext(path: path, endOffset: endOffset)
+            await self?.finishCodexModelBackfill(
+                sessionId: sessionId,
+                attachmentToken: attachmentToken,
+                codexModel: codexModel
+            )
+        }
+    }
+
+    func finishCodexModelBackfill(
+        sessionId: String,
+        attachmentToken: UUID,
+        codexModel: ModelObservation?
+    ) {
+        guard let pending = pendingCodexModelBackfills[sessionId],
+              pending.attachmentToken == attachmentToken else { return }
+        pendingCodexModelBackfills.removeValue(forKey: sessionId)
+        guard attachedTranscriptTokens[sessionId] == attachmentToken,
+              let codexModel, !pending.sawLiveModelObservation,
+              var session = sessions[sessionId],
+              session.applyBackfilledModelObservation(codexModel) else { return }
+        sessions[sessionId] = session
+        scheduleSave()
+    }
+
+    /// Current byte size of a transcript, or 0 when unreadable.
+    nonisolated static func transcriptFileSize(_ path: String) -> UInt64 {
+        let size = (try? FileManager.default.attributesOfItem(atPath: path))?[.size] as? NSNumber
+        return size?.uint64Value ?? 0
     }
 }

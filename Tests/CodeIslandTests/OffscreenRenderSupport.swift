@@ -248,7 +248,7 @@ struct DefaultsSandbox {
             SettingsKey.showGitBranch,
             SettingsKey.aiMessageLines,
             SettingsKey.collapseOnMouseLeave, SettingsKey.maxToolHistory,
-            SettingsKey.showSessionRecap, SettingsKey.showModelLabel, SettingsKey.showTaskProgress,
+            SettingsKey.showModelLabel,
             SettingsKey.showProjectName, SettingsKey.followUpReminderMinutes,
         ] + ShortcutAction.allCases.flatMap { action in
             [

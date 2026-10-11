@@ -194,12 +194,6 @@ public struct SessionSnapshot: Sendable {
     /// (a turn may have switched branches). nil for non-repo and remote cwds.
     public var gitBranch: String?
     public var gitIsWorktree: Bool = false
-    /// The agent's own task checklist (TaskCreate/TaskUpdate, TodoWrite,
-    /// Codex update_plan), fed by hooks here and by the transcript tailer.
-    public var agentTasks = AgentTaskList()
-    /// Claude Code's `away_summary` recap of an idle session; cleared by the
-    /// next user prompt. See ``SessionRecap``.
-    public var recap: SessionRecap?
     /// Reasoning effort of the latest turn ("xhigh", "max", …), read from the
     /// transcript next to the turn's model. Hooks don't report it.
     public var reasoningEffort: String?
@@ -1129,13 +1123,6 @@ public func reduceEvent(
 
     // Route subagent-specific events
     if let agentId = event.agentId {
-        // Subagents and teammates share the parent's task list: their
-        // TaskUpdate calls move the parent's rows too. Their own creates stay
-        // off the parent card (see applySharedUpdates).
-        let sharedTaskEvents = AgentTaskHookParser.events(from: event, normalizedEventName: eventName)
-        if !sharedTaskEvents.isEmpty {
-            sessions[sessionId]?.agentTasks.applySharedUpdates(sharedTaskEvents, now: Date())
-        }
         let handled = handleSubagentEvent(
             sessions: &sessions,
             sessionId: sessionId,
@@ -1167,22 +1154,12 @@ public func reduceEvent(
     let isWaiting = sessions[sessionId]?.status == .waitingApproval
         || sessions[sessionId]?.status == .waitingQuestion
 
-    // Agent checklist progress. Subagent tool events were consumed by
-    // handleSubagentEvent above (after their shared-list updates), so a
-    // child's own list never lands here.
-    let agentTasksBeforeEvent = sessions[sessionId]?.agentTasks
-    let agentTaskEvents = AgentTaskHookParser.events(from: event, normalizedEventName: eventName)
-    if !agentTaskEvents.isEmpty {
-        sessions[sessionId]?.agentTasks.apply(agentTaskEvents, now: Date())
-    }
-
     // Update this session's state
     switch eventName {
     case "UserPromptSubmit":
         sessions[sessionId]?.interrupted = false
         sessions[sessionId]?.lastTurnFailed = false
         sessions[sessionId]?.taskRoundEnded = false
-        sessions[sessionId]?.clearRecapIfSuperseded(byPromptAt: Date())
         if sessions[sessionId]?.source == "codex" {
             sessions[sessionId]?.liveCodexOutput = nil
         }
@@ -1591,15 +1568,6 @@ public func reduceEvent(
     // After the switch: SessionStart rebuilt the snapshot.
     if HermesHookPayload.platform(of: event) != nil {
         sessions[sessionId]?.hermesChatElsewhere = HermesHookPayload.isQuiet(event)
-    }
-
-    // SessionStart rebuilt the snapshot, but a resumed or compacted
-    // conversation is still working through the same checklist. /clear
-    // starts the conversation over — even when it keeps the session id — so
-    // the old checklist goes with it.
-    if eventName == "SessionStart", let agentTasksBeforeEvent,
-       (event.rawJSON["source"] as? String)?.lowercased() != "clear" {
-        sessions[sessionId]?.agentTasks = agentTasksBeforeEvent
     }
 
     sessions[sessionId]?.lastActivity = Date()

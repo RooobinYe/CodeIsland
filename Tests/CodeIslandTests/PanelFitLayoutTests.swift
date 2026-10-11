@@ -36,8 +36,8 @@ final class PanelFitLayoutTests: XCTestCase {
 
     func testFewTallSessionsStayInsideTheWindow() throws {
         // Four sessions — under the five the window is sized for — but with
-        // a task list, an approval row and a recap they ran ~150pt past the
-        // 510pt window, footer and all.
+        // a running tool and a few chat rows each they ran past the 510pt
+        // window, footer and all.
         let state = try tallSessions(count: 4)
         defer { state.release() }
         let panel = try PanelHost(state.state, notchHeight: 32)
@@ -85,9 +85,8 @@ final class PanelFitLayoutTests: XCTestCase {
             s.lastUserPrompt = "Add filters to the dashboard page"
             s.addRecentMessage(ChatMessage(isUser: true, text: "Add filters to the dashboard page"))
             s.addRecentMessage(ChatMessage(isUser: false, text: "Adding a date-range and status filter bar above the orders table."))
-            s.agentTasks = AgentTaskList(items: (1...5).map {
-                AgentTaskItem(id: "t\($0)", title: "Task \($0)", status: $0 < 3 ? .completed : ($0 == 3 ? .inProgress : .pending))
-            })
+            s.addRecentMessage(ChatMessage(isUser: true, text: "Also persist the filters in the URL"))
+            s.addRecentMessage(ChatMessage(isUser: false, text: "Filters now round-trip through the query string, so a reload keeps them."))
             state.sessions["s\(index)"] = s
         }
         state.activeSessionId = "s0"

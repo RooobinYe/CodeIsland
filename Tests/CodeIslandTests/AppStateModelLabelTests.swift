@@ -18,10 +18,6 @@ final class AppStateModelLabelTests: XCTestCase {
         try? FileManager.default.removeItem(at: tempDir)
     }
 
-    private func recapLine(_ text: String, timestamp: String = "2026-09-12T03:35:41.545Z") -> String {
-        #"{"parentUuid":"p","isSidechain":false,"type":"system","subtype":"away_summary","content":"\#(text) (disable recaps in /config)","timestamp":"\#(timestamp)","uuid":"u","isMeta":false,"sessionId":"s"}"#
-    }
-
     private func userLine(_ text: String) -> String {
         #"{"parentUuid":"p","isSidechain":false,"type":"user","message":{"role":"user","content":"\#(text)"},"uuid":"u"}"#
     }
@@ -54,6 +50,23 @@ final class AppStateModelLabelTests: XCTestCase {
         ))
 
         XCTAssertEqual(appState.sessions["s1"]?.modelLabel, "Opus 5.5 1M · xhigh")
+    }
+
+    func testAttachBackfillsModelAndEffort() throws {
+        let path = try writeTranscript([
+            userLine("ship it"),
+            assistantLine(model: "claude-opus-5-5", effort: "xhigh"),
+        ])
+        let appState = AppState()
+        var session = SessionSnapshot()
+        session.transcriptPath = path
+        appState.sessions["s1"] = session
+
+        appState.attachTranscriptTailerIfNeeded(sessionId: "s1")
+        defer { appState.detachTranscriptTailer(sessionId: "s1") }
+
+        XCTAssertEqual(appState.sessions["s1"]?.model, "claude-opus-5-5")
+        XCTAssertEqual(appState.sessions["s1"]?.reasoningEffort, "xhigh")
     }
 
     func testResumeWithADifferentModelKeepsTheModelTheHookReported() throws {
@@ -221,7 +234,7 @@ final class AppStateModelLabelTests: XCTestCase {
             lines.append(#"{"timestamp":"2026-09-23T12:00:02.000Z","type":"response_item","payload":{"type":"function_call_output","call_id":"call_\#(index)","output":"\#(output)"}}"#)
         }
         let childPath = try writeTranscript(lines, name: "rollout-child.jsonl")
-        XCTAssertNil(JSONLTailer.scanFileTail(path: childPath)?.modelObservation, "fixture: out of the 128 KB window")
+        XCTAssertNil(JSONLTailer.scanTailForAttach(path: childPath)?.delta.modelObservation, "fixture: out of the 128 KB window")
 
         let appState = AppState()
         var parent = SessionSnapshot()
@@ -271,5 +284,55 @@ final class AppStateModelLabelTests: XCTestCase {
         ], name: "rollout.jsonl")
 
         XCTAssertEqual(AppState.readRecentFromCodexTranscript(path: path).0, "gpt-5.6-sol")
+    }
+
+    // MARK: - Persistence
+
+    func testPersistedSessionRoundTripsEffort() throws {
+        let createdAt = try XCTUnwrap(ISO8601DateFormatter().date(from: "2026-09-12T03:35:41Z"))
+        let session = PersistedSession(
+            sessionId: "s1", cwd: "/repo", source: "claude", model: "claude-opus-5-5",
+            sessionTitle: nil, sessionTitleSource: nil, providerSessionId: nil,
+            lastUserPrompt: "hi", lastAssistantMessage: "done",
+            termApp: nil, itermSessionId: nil, ttyPath: nil, kittyWindowId: nil,
+            tmuxPane: nil, tmuxClientTty: nil, tmuxEnv: nil, termBundleId: nil,
+            cmuxSurfaceId: nil, cmuxWorkspaceId: nil, zellijPaneId: nil, zellijSessionName: nil,
+            weztermPaneId: nil, herdrPaneId: nil, herdrSocketPath: nil, herdrBinaryPath: nil,
+            cliPid: nil, cliStartTime: nil, startTime: createdAt, lastActivity: createdAt,
+            transcriptPath: nil, closedSubagentIds: nil,
+            reasoningEffort: "xhigh"
+        )
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+
+        let decoded = try decoder.decode(PersistedSession.self, from: encoder.encode(session))
+
+        XCTAssertEqual(decoded.reasoningEffort, "xhigh")
+    }
+
+    func testPersistedSessionWithoutEffortStillDecodes() throws {
+        let json = """
+        {"sessionId":"s1","source":"claude","startTime":"2026-04-09T10:00:00Z","lastActivity":"2026-04-09T10:01:00Z"}
+        """
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let decoded = try decoder.decode(PersistedSession.self, from: Data(json.utf8))
+        XCTAssertNil(decoded.reasoningEffort)
+    }
+
+    /// Files written before the checklist and recap were removed still carry
+    /// those keys; they are ignored rather than failing the entry.
+    func testPersistedSessionWithRemovedFieldsStillDecodes() throws {
+        let json = """
+        {"sessionId":"s1","source":"claude","startTime":"2026-04-09T10:00:00Z","lastActivity":"2026-04-09T10:01:00Z",
+         "agentTasks":{"items":[{"id":"t1","title":"x","status":"pending"}]},
+         "recap":{"text":"r","createdAt":"2026-04-09T10:01:00Z"},"reasoningEffort":"high"}
+        """
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let decoded = try decoder.decode(PersistedSession.self, from: Data(json.utf8))
+        XCTAssertEqual(decoded.reasoningEffort, "high")
     }
 }

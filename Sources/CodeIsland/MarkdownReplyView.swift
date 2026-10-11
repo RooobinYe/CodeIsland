@@ -200,9 +200,8 @@ enum CompletionReplyMetrics {
     }
 
     /// The reply gets whatever the panel window leaves once the rest of the
-    /// card is laid out. That rest — notch bar, card header, task progress
-    /// (expanded or not), older messages, the recap, the "N sessions" link,
-    /// paddings — changes with the notch height, the font size and the
+    /// card is laid out. That rest — notch bar, card header, older messages,
+    /// the "N sessions" link, paddings — changes with the notch height, the font size and the
     /// settings, so it is measured, not estimated (CompletionCardChrome). The
     /// window is further capped by the maxPanelHeight setting, which keeps an
     /// auto-opening card from covering half the screen when the session list
@@ -245,9 +244,6 @@ enum CompletionReplyMetrics {
     static func olderReplyLineLimit(_ setting: Int?) -> Int {
         min(setting ?? 2, 2)
     }
-
-    /// Same for the recap under the chat rows; the tooltip has all of it.
-    static let recapLineLimit = 2
 }
 
 private struct CapsBlockHeightKey: EnvironmentKey {

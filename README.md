@@ -47,7 +47,7 @@ It works with **30+ AI coding tools**, installs its hooks for you, and keeps eve
 **👀 See everything at a glance**
 
 - Live status, current tool and latest reply for every session; finished replies render as Markdown (lists, tables, code)
-- The agent's own task checklist as a progress bar, Claude Code's "while you were away" recap, and (opt-in) model + reasoning effort
+- (Opt-in) model + reasoning effort on each session card
 - Git branch and worktree on each card
 - A static logo per tool, so you can tell harnesses apart at a glance
 
@@ -70,7 +70,7 @@ It works with **30+ AI coding tools**, installs its hooks for you, and keeps eve
 
 - Smart suppress: no ping while you're already looking at that session's tab
 - Quiet hours, per-event 8-bit sounds, a "glance dot" completion mode
-- Hides in full screen, steps around menu-bar icons, adjustable open/close speed
+- Hides in full screen and steps around menu-bar icons
 - Silence rules for directories you never want to hear about
 - Mutes itself while the screen is locked or asleep; a failed tool call no longer rings the error sound, only a turn that dies does
 - Opt-in follow-up reminders for blocked sessions and finished work you haven't looked at yet
@@ -297,7 +297,7 @@ CodeIsland installs lightweight hooks into each tool's own config. When the tool
 |------|--------------|
 | **General** | Language, launch at login, display selection |
 | **Behavior** | Smart suppress, completion style, follow-up reminders, session cleanup, silence rules, push notifications, webhook |
-| **Appearance** | Panel size, notch width, font size, reply lines, open/close speed, project name, git branch, task progress, session recap, model label |
+| **Appearance** | Panel size, notch width, font size, reply lines, project name, git branch, model label |
 | **Sound** | 8-bit sounds per event, volume, quiet hours, mute while away |
 | **Shortcuts** | Global hotkeys for toggle and jump |
 | **Remote** | SSH hosts and per-host directory filters |

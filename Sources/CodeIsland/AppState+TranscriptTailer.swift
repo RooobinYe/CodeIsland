@@ -42,12 +42,9 @@ extension AppState {
             sessions[sessionId] = session
         }
 
-        // Recap + model/effort from the transcript tail, by the same rules as
-        // live deltas. Authoritative for the recap, so a persisted one that a
-        // newer prompt superseded while nobody was watching is dropped here.
-        // Its end offset is where the tailer and the checklist backfill pick
-        // up, so a line written meanwhile (the prompt that makes this recap
-        // stale, Codex's last update_plan) is read by exactly one of them.
+        // Model/effort from the transcript tail, by the same rules as live
+        // deltas. Its end offset is where the tailer picks up, so a line
+        // written meanwhile is read by exactly one of them.
         let tailScan = JSONLTailer.scanTailForAttach(path: path)
         if let tailScan,
            var session = sessions[sessionId],
@@ -109,8 +106,6 @@ extension AppState {
             }
         }
 
-        // Checklist history is rebuilt off the main actor from the bytes the
-        // tailer will not see: everything before the tailer's start offset.
         let attachOffset = tailScan?.endOffset ?? Self.transcriptFileSize(path)
         let attachmentToken = transcriptTailer.attach(
             sessionId: sessionId,
@@ -118,15 +113,18 @@ extension AppState {
             initialOffset: attachOffset
         )
         attachedTranscriptTokens[sessionId] = attachmentToken
-        startAgentTaskBackfill(
-            sessionId: sessionId,
-            path: path,
-            endOffset: attachOffset,
-            attachmentToken: attachmentToken,
-            // A long Codex turn's output often pushes its turn_context out of
-            // the tail window; look further back, off the main actor.
-            searchCodexModel: sessions[sessionId]?.source == "codex" && tailScan?.delta.modelObservation == nil
-        )
+        // A long Codex turn's output often pushes its turn_context out of the
+        // tail window; look further back, off the main actor.
+        if sessions[sessionId]?.source == "codex", tailScan?.delta.modelObservation == nil {
+            startCodexModelBackfill(
+                sessionId: sessionId,
+                path: path,
+                endOffset: attachOffset,
+                attachmentToken: attachmentToken
+            )
+        } else {
+            pendingCodexModelBackfills.removeValue(forKey: sessionId)
+        }
     }
 
     /// Backfill freshness bound for flipping a session into the display-only
@@ -209,7 +207,7 @@ extension AppState {
     func detachTranscriptTailer(sessionId: String) {
         attachedTranscriptPaths.removeValue(forKey: sessionId)
         attachedTranscriptTokens.removeValue(forKey: sessionId)
-        pendingAgentTaskBackfills.removeValue(forKey: sessionId)
+        pendingCodexModelBackfills.removeValue(forKey: sessionId)
         transcriptTailer.detach(sessionId: sessionId)
     }
 
@@ -289,20 +287,6 @@ extension AppState {
             }
         }
 
-        // Checklist progress from the transcript: the only channel for Codex
-        // update_plan, and the backstop when a Claude hook is missed. A
-        // replaced file re-read from its start is history, rebuilt the way an
-        // attach backfill is — not replayed as news (a plan finished long ago
-        // would flash "all done").
-        if delta.replaysWholeFile {
-            if replayAgentTaskHistory(delta.taskEvents, sessionId: delta.sessionId, to: &session) {
-                mutated = true
-            }
-        } else if !delta.taskEvents.isEmpty,
-           applyAgentTaskTranscriptEvents(delta.taskEvents, sessionId: delta.sessionId, to: &session) {
-            mutated = true
-        }
-
         // Cursor question tool has no hook channel (#265) — the transcript tail is
         // the only signal that the agent is blocked on (or resumed from) a question
         // answered inside Cursor's own UI.
@@ -323,12 +307,12 @@ extension AppState {
             }
         }
 
-        // Recap + model/effort label. Written back without bumping lastActivity:
-        // a recap arrives minutes after the turn ended and is not activity.
+        // Model/effort label. Written back without bumping lastActivity: it
+        // describes the session, it is not activity.
         let metadataChanged = session.applyTranscriptMetadata(from: delta)
         if delta.modelObservation != nil {
             // Newer than anything the attach-time search can still turn up.
-            pendingAgentTaskBackfills[delta.sessionId]?.sawLiveModelObservation = true
+            pendingCodexModelBackfills[delta.sessionId]?.sawLiveModelObservation = true
         }
 
         if mutated {

@@ -3,34 +3,6 @@ import XCTest
 import CodeIslandCore
 
 final class HoverAndDisplaySettingsTests: XCTestCase {
-    // MARK: - Hover expand delay
-
-    func testDefaultHoverDelayIsUnchanged() {
-        XCTAssertEqual(SettingsDefaults.hoverExpandDelay, 0.5)
-        XCTAssertEqual(NotchHoverInteraction.expandDelay(forSetting: SettingsDefaults.hoverExpandDelay), 0.5)
-    }
-
-    func testHoverDelayIsClampedIntoTheOfferedRange() {
-        XCTAssertEqual(NotchHoverInteraction.expandDelay(forSetting: 0.1), 0.1)
-        XCTAssertEqual(NotchHoverInteraction.expandDelay(forSetting: 0.75), 0.75)
-        XCTAssertEqual(NotchHoverInteraction.expandDelay(forSetting: 1.0), 1.0)
-        // A hand-written or zeroed preference must never produce an instant or
-        // negative timer.
-        XCTAssertEqual(NotchHoverInteraction.expandDelay(forSetting: 0), 0.1)
-        XCTAssertEqual(NotchHoverInteraction.expandDelay(forSetting: -3), 0.1)
-        XCTAssertEqual(NotchHoverInteraction.expandDelay(forSetting: 12), 1.0)
-    }
-
-    func testNonFiniteHoverDelayFallsBackToTheDefault() {
-        XCTAssertEqual(NotchHoverInteraction.expandDelay(forSetting: .nan), NotchHoverInteraction.expandDelay)
-        XCTAssertEqual(NotchHoverInteraction.expandDelay(forSetting: .infinity), NotchHoverInteraction.expandDelay)
-    }
-
-    func testHoverDelayRangeMatchesTheRequestedBounds() {
-        XCTAssertEqual(NotchHoverInteraction.expandDelayRange.lowerBound, 0.1)
-        XCTAssertEqual(NotchHoverInteraction.expandDelayRange.upperBound, 1.0)
-    }
-
     // MARK: - Content font size
 
     func testContentFontSizeGoesUpTo16pt() {

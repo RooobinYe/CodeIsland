@@ -392,7 +392,6 @@ private struct BehaviorPage: View {
     @AppStorage(SettingsKey.pluginSessionMode) private var pluginSessionMode = SettingsDefaults.pluginSessionMode
     @AppStorage(SettingsKey.hapticOnHover) private var hapticOnHover = SettingsDefaults.hapticOnHover
     @AppStorage(SettingsKey.hapticIntensity) private var hapticIntensity = SettingsDefaults.hapticIntensity
-    @AppStorage(SettingsKey.hoverExpandDelay) private var hoverExpandDelay = SettingsDefaults.hoverExpandDelay
     @AppStorage(SettingsKey.sessionTimeout) private var sessionTimeout = SettingsDefaults.sessionTimeout
     @AppStorage(SettingsKey.rotationInterval) private var rotationInterval = SettingsDefaults.rotationInterval
     @AppStorage(SettingsKey.maxToolHistory) private var maxToolHistory = SettingsDefaults.maxToolHistory
@@ -472,29 +471,6 @@ private struct BehaviorPage: View {
                         appState?.followUps.settingsChanged()
                     }
                     Text(l10n["follow_up_reminders_desc"])
-                        .font(.system(size: 11))
-                        .foregroundStyle(.tertiary)
-                }
-                VStack(alignment: .leading, spacing: 4) {
-                    let delay = NotchHoverInteraction.expandDelay(forSetting: hoverExpandDelay)
-                    HStack {
-                        Text(l10n["hover_expand_delay"])
-                        Spacer()
-                        Text(String(format: l10n["hover_expand_delay_value"], delay))
-                            .foregroundStyle(.secondary)
-                            .monospacedDigit()
-                    }
-                    Slider(
-                        value: Binding(
-                            get: { NotchHoverInteraction.expandDelay(forSetting: hoverExpandDelay) },
-                            set: { hoverExpandDelay = NotchHoverInteraction.expandDelay(forSetting: $0) }
-                        ),
-                        in: NotchHoverInteraction.expandDelayRange,
-                        step: NotchHoverInteraction.expandDelayStep
-                    )
-                    .accessibilityLabel(Text(l10n["hover_expand_delay"]))
-                    .accessibilityValue(Text(String(format: l10n["hover_expand_delay_value"], delay)))
-                    Text(l10n["hover_expand_delay_desc"])
                         .font(.system(size: 11))
                         .foregroundStyle(.tertiary)
                 }

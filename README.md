@@ -296,7 +296,7 @@ CodeIsland installs lightweight hooks into each tool's own config. When the tool
 | Page | What's there |
 |------|--------------|
 | **General** | Language, launch at login, display selection |
-| **Behavior** | Hover delay, smart suppress, completion style, follow-up reminders, session cleanup, silence rules, push notifications, webhook |
+| **Behavior** | Smart suppress, completion style, follow-up reminders, session cleanup, silence rules, push notifications, webhook |
 | **Appearance** | Panel size, notch width, font size, reply lines, open/close speed, project name, git branch, task progress, session recap, model label |
 | **Sound** | 8-bit sounds per event, volume, quiet hours, mute while away |
 | **Shortcuts** | Global hotkeys for toggle and jump |

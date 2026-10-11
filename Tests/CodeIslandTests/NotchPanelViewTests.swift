@@ -166,39 +166,22 @@ final class NotchPanelViewTests: XCTestCase {
 
 }
 
-// MARK: - Hover phase state machine (PR #208)
+// MARK: - Top-edge reveal
 
 final class NotchHoverInteractionTests: XCTestCase {
-    func testQuickPassThroughReversesPrehoverWithoutExpanding() {
-        var phase = NotchHoverInteraction.nextPhase(from: .collapsed, event: .mouseEntered)
-        XCTAssertEqual(phase, .prehover)
-
-        phase = NotchHoverInteraction.nextPhase(from: phase, event: .mouseExited)
-        XCTAssertEqual(phase, .collapsed)
-
-        // The stale expand timer firing after the mouse left must not expand.
-        phase = NotchHoverInteraction.nextPhase(from: phase, event: .expandDelayElapsed)
-        XCTAssertEqual(phase, .collapsed)
+    func testOnlyTheTopEdgeOpensTheIsland() {
+        // The screen's top row, whichever way it rounds.
+        XCTAssertTrue(NotchHoverInteraction.isAtTopEdge(y: 0))
+        XCTAssertTrue(NotchHoverInteraction.isAtTopEdge(y: 1))
+        // Anywhere lower on the bar is just passing through.
+        XCTAssertFalse(NotchHoverInteraction.isAtTopEdge(y: 2))
+        XCTAssertFalse(NotchHoverInteraction.isAtTopEdge(y: 16))
     }
+}
 
-    func testDwellExpandsThenCollapsesAfterLeaveDelay() {
-        var phase = NotchHoverInteraction.nextPhase(from: .collapsed, event: .mouseEntered)
-        phase = NotchHoverInteraction.nextPhase(from: phase, event: .expandDelayElapsed)
-        XCTAssertEqual(phase, .expanded)
+// MARK: - Collapsed width scale
 
-        // Leaving alone doesn't collapse an expanded panel — the delay does.
-        phase = NotchHoverInteraction.nextPhase(from: phase, event: .mouseExited)
-        XCTAssertEqual(phase, .expanded)
-
-        phase = NotchHoverInteraction.nextPhase(from: phase, event: .collapseDelayElapsed)
-        XCTAssertEqual(phase, .collapsed)
-    }
-
-    func testCollapseDelayWhileNotExpandedIsANoOp() {
-        XCTAssertEqual(NotchHoverInteraction.nextPhase(from: .collapsed, event: .collapseDelayElapsed), .collapsed)
-        XCTAssertEqual(NotchHoverInteraction.nextPhase(from: .prehover, event: .collapseDelayElapsed), .prehover)
-    }
-
+final class NotchWidthScaleTests: XCTestCase {
     func testWidthScaleSliderUsesOnePercentSteps() {
         XCTAssertEqual(NotchWidthScale.min, 50)
         XCTAssertEqual(NotchWidthScale.max, 150)

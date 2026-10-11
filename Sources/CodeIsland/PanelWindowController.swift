@@ -7,6 +7,18 @@ private let log = Logger(subsystem: "com.codeisland", category: "Panel")
 private class KeyablePanel: NSPanel {
     override var canBecomeKey: Bool { true }
 
+    /// Take key focus before AppKit routes a click, not in the view that gets
+    /// it. A window that isn't key hands a click on to its hit view only if
+    /// that view accepts first mouse, and inside a SwiftUI ScrollView the hit
+    /// view is one of SwiftUI's own, which doesn't. So once the session list
+    /// grew long enough to scroll, the first click on a card only made the
+    /// panel key and the jump took a second click. Already key, the window
+    /// routes the click straight to the card.
+    override func sendEvent(_ event: NSEvent) {
+        if event.type == .leftMouseDown, !isKeyWindow { makeKey() }
+        super.sendEvent(event)
+    }
+
     /// The island deliberately overlaps the menu-bar / notch area. AppKit's
     /// default constrain clamps borderless windows below the menu bar whenever
     /// the system re-places windows (display reconfigure, wake from sleep),
@@ -16,19 +28,15 @@ private class KeyablePanel: NSPanel {
     }
 }
 
-/// Ensures first click on a nonactivatingPanel fires SwiftUI actions
-/// instead of being consumed for key-window activation.
+/// Accepts first mouse so a click on the panel isn't consumed for key-window
+/// activation. Left clicks are covered by KeyablePanel.sendEvent wherever
+/// they land; this still covers other clicks on the hosting view itself.
 /// Also guards against NSHostingView constraint-update re-entrancy crash:
 /// during updateConstraints(), SwiftUI may invalidate the view graph and
 /// call setNeedsUpdateConstraints again, which AppKit forbids.
 private class NotchHostingView<Content: View>: NSHostingView<Content> {
     /// When true, the deferred handler is setting super — don't re-defer.
     private var applyingDeferred = false
-
-    override func mouseDown(with event: NSEvent) {
-        window?.makeKey()
-        super.mouseDown(with: event)
-    }
 
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
@@ -673,7 +681,7 @@ class PanelWindowController: NSObject, NSWindowDelegate {
     }
 
     /// Whether the island currently holds keyboard focus. It only becomes key
-    /// when the user clicks into it (NotchHostingView.mouseDown).
+    /// when the user clicks into it (KeyablePanel.sendEvent).
     var isPanelKeyWindow: Bool {
         panel?.isKeyWindow == true
     }

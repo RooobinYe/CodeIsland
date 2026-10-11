@@ -1,5 +1,5 @@
 // CodeIsland pi extension
-// version: v4
+// version: v5
 
 /**
  * @fileoverview CodeIsland Integration Extension.
@@ -39,7 +39,8 @@
  *   is the coordination point. See companion skip check in permission-gate.ts.
  *
  * Installation:
- *   Drop this file in ~/.pi/agent/extensions/ — it is auto-discovered.
+ *   CodeIsland writes it to ~/.pi/agent/extensions/pi-codeisland/index.ts —
+ *   auto-discovered, and listed by pi as "pi-codeisland".
  *
  * Requirements:
  *   - CodeIsland.app running on the same machine
@@ -146,6 +147,9 @@ function detectTty(): string | null {
   return null;
 }
 
+/** The session's model id (`ctx.model.id`), sent on every event so the island can label it. */
+let currentModelId: string | undefined;
+
 // ── Socket communication ──────────────────────────────────────────────────────
 
 /**
@@ -242,6 +246,7 @@ function base(
     _tty: tty,
     _server_port: 0,
     cwd,
+    ...(currentModelId ? { model: currentModelId } : {}),
     ...extra,
   };
 }
@@ -406,6 +411,7 @@ export default function codeislandExtension(pi: ExtensionAPI) {
   // ── Session lifecycle ──────────────────────────────────────────────────────
 
   pi.on("session_start", async (_event, ctx) => {
+    currentModelId = ctx.model?.id;
     const sessionId = ctx.sessionManager.getSessionId();
     await ensureSessionStarted(sessionId, ctx.cwd);
   });
@@ -421,6 +427,8 @@ export default function codeislandExtension(pi: ExtensionAPI) {
   // ── Agent lifecycle ────────────────────────────────────────────────────────
 
   pi.on("before_agent_start", async (event, ctx) => {
+    // Picks up a /model switch before the prompt it applies to.
+    currentModelId = ctx.model?.id ?? currentModelId;
     const sessionId = ctx.sessionManager.getSessionId();
     const sid = `pi-${sessionId}`;
     await ensureSessionStarted(sessionId, ctx.cwd);

@@ -1463,21 +1463,20 @@ hooks:
         let fm = FileManager.default
         let tempDir = fm.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         let piAgentDir = tempDir.appendingPathComponent(".pi/agent")
-        let piExtensionDir = piAgentDir.appendingPathComponent("extensions")
-        let piExtensionPath = piExtensionDir.appendingPathComponent("codeisland.ts")
+        let piExtensionPath = piAgentDir.appendingPathComponent("extensions/pi-codeisland/index.ts")
         try fm.createDirectory(at: piAgentDir, withIntermediateDirectories: true)
         defer { try? fm.removeItem(at: tempDir) }
 
         XCTAssertTrue(ConfigInstaller.installPiExtension(
             piAgentDir: piAgentDir.path,
-            piExtensionDir: piExtensionDir.path,
             piExtensionPath: piExtensionPath.path,
             fm: fm
         ))
 
         let contents = try String(contentsOf: piExtensionPath)
         XCTAssertTrue(contents.contains("CodeIsland pi extension"))
-        XCTAssertTrue(contents.contains("// version: v4"))
+        XCTAssertTrue(contents.contains("// version: v5"))
+        XCTAssertTrue(contents.contains("model: currentModelId"), "events carry the model id")
         XCTAssertTrue(contents.contains("__codeislandAllowedToolCalls"))
         XCTAssertTrue(contents.contains("@earendil-works/pi-coding-agent"))
         XCTAssertTrue(ConfigInstaller.isPiExtensionInstalled(piExtensionPath: piExtensionPath.path, fm: fm))
@@ -1487,13 +1486,11 @@ hooks:
         let fm = FileManager.default
         let tempDir = fm.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         let piAgentDir = tempDir.appendingPathComponent(".pi/agent")
-        let piExtensionDir = piAgentDir.appendingPathComponent("extensions")
-        let piExtensionPath = piExtensionDir.appendingPathComponent("codeisland.ts")
+        let piExtensionPath = piAgentDir.appendingPathComponent("extensions/pi-codeisland/index.ts")
         defer { try? fm.removeItem(at: tempDir) }
 
         XCTAssertTrue(ConfigInstaller.installPiExtension(
             piAgentDir: piAgentDir.path,
-            piExtensionDir: piExtensionDir.path,
             piExtensionPath: piExtensionPath.path,
             fm: fm
         ))
@@ -1503,24 +1500,24 @@ hooks:
     func testUninstallPiExtensionOnlyRemovesCodeIslandExtension() throws {
         let fm = FileManager.default
         let tempDir = fm.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-        let piExtensionPath = tempDir.appendingPathComponent("codeisland.ts")
+        let piExtensionPath = tempDir.appendingPathComponent("pi-codeisland/index.ts")
         let userExtensionPath = tempDir.appendingPathComponent("user.ts")
-        try fm.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        try fm.createDirectory(at: piExtensionPath.deletingLastPathComponent(), withIntermediateDirectories: true)
         defer { try? fm.removeItem(at: tempDir) }
         try "// CodeIsland pi extension\n// version: v1\n".write(to: piExtensionPath, atomically: true, encoding: .utf8)
         try "// user extension\n".write(to: userExtensionPath, atomically: true, encoding: .utf8)
 
         ConfigInstaller.uninstallPiExtension(piExtensionPath: piExtensionPath.path, fm: fm)
 
-        XCTAssertFalse(fm.fileExists(atPath: piExtensionPath.path))
+        XCTAssertFalse(fm.fileExists(atPath: piExtensionPath.deletingLastPathComponent().path), "the folder goes too")
         XCTAssertTrue(fm.fileExists(atPath: userExtensionPath.path))
     }
 
     func testUninstallPiExtensionPreservesUserFileAtSamePath() throws {
         let fm = FileManager.default
         let tempDir = fm.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-        let piExtensionPath = tempDir.appendingPathComponent("codeisland.ts")
-        try fm.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        let piExtensionPath = tempDir.appendingPathComponent("pi-codeisland/index.ts")
+        try fm.createDirectory(at: piExtensionPath.deletingLastPathComponent(), withIntermediateDirectories: true)
         defer { try? fm.removeItem(at: tempDir) }
         try "// user-managed file\n".write(to: piExtensionPath, atomically: true, encoding: .utf8)
 
@@ -1533,8 +1530,8 @@ hooks:
     func testOutdatedPiExtensionRequiresRepair() throws {
         let fm = FileManager.default
         let tempDir = fm.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-        let piExtensionPath = tempDir.appendingPathComponent("codeisland.ts")
-        try fm.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        let piExtensionPath = tempDir.appendingPathComponent("pi-codeisland/index.ts")
+        try fm.createDirectory(at: piExtensionPath.deletingLastPathComponent(), withIntermediateDirectories: true)
         defer { try? fm.removeItem(at: tempDir) }
         try "// CodeIsland pi extension\n// version: old\n".write(to: piExtensionPath, atomically: true, encoding: .utf8)
 

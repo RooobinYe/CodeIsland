@@ -167,7 +167,7 @@ CodeIsland 启动时会自动写入以下配置，配置被改动时会自动修
 | Cline | `~/Documents/Cline/Hooks` |
 | OpenCode | 插件 `~/.config/opencode/plugins/codeisland.js` |
 | MiMo Code / Xiaomi MiMo | 插件 `~/.config/mimocode/plugins/codeisland.js`，见[下文](#mimo) |
-| Pi / Oh My Pi | 扩展 `~/.pi/agent/extensions/codeisland.ts` / `~/.omp/agent/extensions/codeisland.ts` |
+| Pi / Oh My Pi | 扩展 `~/.pi/agent/extensions/pi-codeisland/` / `~/.omp/agent/extensions/codeisland.ts` |
 | OpenClaw | 插件 `~/.openclaw/codeisland-plugin/` |
 | DeepSeek Harness | [dsh-island](https://github.com/cdxiaodong/dsh-island) 插件，见[下文](#deepseek-harness) |
 | AiWork | 无需安装，直接读取 AiWork 本机守护进程 |

@@ -179,8 +179,9 @@ struct ConfigInstaller {
     private static let hermesConfigPath = NSHomeDirectory() + "/.hermes/config.yaml"
     private static let zcodeConfigPath = NSHomeDirectory() + "/.zcode/cli/config.json"
     private static let piAgentDir = NSHomeDirectory() + "/.pi/agent"
-    private static let piExtensionDir = NSHomeDirectory() + "/.pi/agent/extensions"
-    private static let piExtensionPath = NSHomeDirectory() + "/.pi/agent/extensions/codeisland.ts"
+    /// A folder with an index.ts, so pi lists it as "pi-codeisland" (a bare
+    /// file would show as "codeisland.ts").
+    private static let piExtensionPath = NSHomeDirectory() + "/.pi/agent/extensions/pi-codeisland/index.ts"
     private static let ompAgentDir = NSHomeDirectory() + "/.omp/agent"
     private static let ompExtensionDir = NSHomeDirectory() + "/.omp/agent/extensions"
     private static let ompExtensionPath = NSHomeDirectory() + "/.omp/agent/extensions/codeisland.ts"
@@ -643,7 +644,7 @@ struct ConfigInstaller {
         CLIConfig(
             name: "Pi",
             source: "pi",
-            configPath: ".pi/agent/extensions/codeisland.ts", configKey: "",
+            configPath: ".pi/agent/extensions/pi-codeisland/index.ts", configKey: "",
             format: .none,
             events: []
         ),
@@ -3290,7 +3291,7 @@ struct ConfigInstaller {
     // MARK: - pi Extension
 
     /// Current pi extension version — bump when codeisland-pi.ts changes.
-    private static let piExtensionVersion = "v4"
+    private static let piExtensionVersion = "v5"
 
     /// Current omp extension version — bump when codeisland-omp.ts changes.
     /// Kept independent of pi (OMP reuses the "CodeIsland pi extension" banner
@@ -3309,27 +3310,29 @@ struct ConfigInstaller {
     @discardableResult
     static func installPiExtension(
         piAgentDir: String = piAgentDir,
-        piExtensionDir: String = piExtensionDir,
         piExtensionPath: String = piExtensionPath,
         fm: FileManager
     ) -> Bool {
         guard fm.fileExists(atPath: piAgentDir) else { return true }
         guard let source = piExtensionSource() else { return false }
-        try? fm.createDirectory(atPath: piExtensionDir, withIntermediateDirectories: true)
+        try? fm.createDirectory(atPath: (piExtensionPath as NSString).deletingLastPathComponent, withIntermediateDirectories: true)
         if fm.fileExists(atPath: piExtensionPath) { try? fm.removeItem(atPath: piExtensionPath) }
         return fm.createFile(atPath: piExtensionPath, contents: Data(source.utf8))
+    }
+
+    /// The extension file at `path` is ours (pi and OMP share the banner).
+    private static func isCodeIslandExtension(at path: String, fm: FileManager) -> Bool {
+        fm.contents(atPath: path).flatMap { String(data: $0, encoding: .utf8) }?
+            .contains("CodeIsland pi extension") == true
     }
 
     static func uninstallPiExtension(
         piExtensionPath: String = piExtensionPath,
         fm: FileManager
     ) {
-        guard fm.fileExists(atPath: piExtensionPath),
-              let data = fm.contents(atPath: piExtensionPath),
-              let content = String(data: data, encoding: .utf8),
-              content.contains("CodeIsland pi extension")
-        else { return }
-        try? fm.removeItem(atPath: piExtensionPath)
+        guard isCodeIslandExtension(at: piExtensionPath, fm: fm) else { return }
+        // The whole pi-codeisland/ folder is ours.
+        try? fm.removeItem(atPath: (piExtensionPath as NSString).deletingLastPathComponent)
     }
 
     static func isPiExtensionInstalled(
@@ -3370,7 +3373,8 @@ struct ConfigInstaller {
         ompExtensionPath: String = ompExtensionPath,
         fm: FileManager
     ) {
-        uninstallPiExtension(piExtensionPath: ompExtensionPath, fm: fm)
+        guard isCodeIslandExtension(at: ompExtensionPath, fm: fm) else { return }
+        try? fm.removeItem(atPath: ompExtensionPath)
     }
 
     static func isOmpExtensionInstalled(

@@ -167,7 +167,7 @@ CodeIsland writes these for you on launch (and repairs them if they drift); each
 | Cline | `~/Documents/Cline/Hooks` |
 | OpenCode | plugin at `~/.config/opencode/plugins/codeisland.js` |
 | MiMo Code / Xiaomi MiMo | plugin at `~/.config/mimocode/plugins/codeisland.js` — [see below](#mimo) |
-| Pi / Oh My Pi | extension at `~/.pi/agent/extensions/codeisland.ts` / `~/.omp/agent/extensions/codeisland.ts` |
+| Pi / Oh My Pi | extension at `~/.pi/agent/extensions/pi-codeisland/` / `~/.omp/agent/extensions/codeisland.ts` |
 | OpenClaw | plugin at `~/.openclaw/codeisland-plugin/` |
 | DeepSeek Harness | [dsh-island](https://github.com/cdxiaodong/dsh-island) plugin — see [below](#deepseek-harness) |
 | AiWork | nothing to install — read from AiWork's local daemon |

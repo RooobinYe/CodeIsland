@@ -231,18 +231,10 @@ enum CompletionReplyMetrics {
     }
 
     /// The message the completion card renders in full: the newest one, when
-    /// it's the assistant's — the reply that just finished. Older replies in
-    /// the card keep following the line cap.
+    /// it's the assistant's — the reply that just finished.
     static func fullReplyId(in messages: [ChatMessage], isCompletionCard: Bool) -> UUID? {
         guard isCompletionCard, let last = messages.last, !last.isUser else { return nil }
         return last.id
-    }
-
-    /// Line cap for the older replies above the finished one: one or two
-    /// lines whatever the setting. They are context, and every line they
-    /// take is a line less for the reply the card is about.
-    static func olderReplyLineLimit(_ setting: Int?) -> Int {
-        min(setting ?? 2, 2)
     }
 }
 

@@ -108,6 +108,11 @@ struct NotchPanelView: View {
     private var isNotchShell: Bool {
         !showBar && !showIdleIndicator
     }
+    /// The idle marker with nothing to show: drawn as the notch itself, no
+    /// empty wing beside it. Reaching the top edge still opens its buttons.
+    private var isIdleAtRest: Bool {
+        showIdleIndicator && !idleHovered
+    }
 
     /// Mascot size — fits within the menu bar height
     private var mascotSize: CGFloat { min(27, notchHeight - 6) }
@@ -127,7 +132,11 @@ struct NotchPanelView: View {
     private var panelWidth: CGFloat {
         let nw = effectiveNotchW
         let lip = CompactRightWingLayout.leadingLip
-        if showIdleIndicator { return lip + nw + (idleHovered ? compactWingWidth + 40 : compactWingWidth) }
+        if showIdleIndicator {
+            guard idleHovered else { return notchW }
+            let content = IdleIndicatorLayout.hoveredWidth(quitText: L10n.shared["quit_confirm"])
+            return lip + nw + CompactRightWingLayout.room(contentWidth: content, minimum: compactWingWidth)
+        }
         if isNotchShell { return notchW }
         if shouldShowExpanded { return min(max(nw + 200, 580), maxPanelWidth) }
         return lip + nw + collapsedRightRoom
@@ -146,13 +155,23 @@ struct NotchPanelView: View {
     /// Collapsed bars hang off the notch's right, so they shift right to keep
     /// the (physical or simulated) notch centred; expanded stays centred.
     private var barOffset: CGFloat {
-        guard (showBar && !shouldShowExpanded) || showIdleIndicator else { return 0 }
+        guard (showBar && !shouldShowExpanded) || (showIdleIndicator && !isIdleAtRest) else { return 0 }
         return (panelWidth - effectiveNotchW) / 2 - CompactRightWingLayout.leadingLip
     }
 
     /// The pointer arrived at the top edge over the island: open the session
     /// list, unless the island is already open or not a bar that opens.
     private func openFromTopEdge() {
+        // No sessions: the idle marker opens to its buttons the same way —
+        // never on a pointer merely passing over it.
+        if showIdleIndicator {
+            guard !idleHovered else { return }
+            hoverTimer?.invalidate()
+            hoverTimer = nil
+            playOpenHaptic()
+            withAnimation(NotchAnimation.micro) { idleHovered = true }
+            return
+        }
         guard showBar, appState.surface == .collapsed else { return }
         // Smart suppress: don't auto-expand when active session's terminal is foreground
         if smartSuppress,
@@ -161,6 +180,17 @@ struct NotchPanelView: View {
            pc.isActiveTerminalForeground() {
             return
         }
+        playOpenHaptic()
+        withAnimation(NotchAnimation.open) {
+            appState.surface = .sessionList
+            appState.cancelCompletionQueue()
+            if appState.activeSessionId == nil {
+                appState.activeSessionId = appState.sessions.keys.sorted().first
+            }
+        }
+    }
+
+    private func playOpenHaptic() {
         if hapticOnHover {
             let performer = NSHapticFeedbackManager.defaultPerformer
             switch hapticIntensity {
@@ -173,13 +203,6 @@ struct NotchPanelView: View {
                 performer.perform(.levelChange, performanceTime: .default)
             default: // light
                 performer.perform(.alignment, performanceTime: .default)
-            }
-        }
-        withAnimation(NotchAnimation.open) {
-            appState.surface = .sessionList
-            appState.cancelCompletionQueue()
-            if appState.activeSessionId == nil {
-                appState.activeSessionId = appState.sessions.keys.sorted().first
             }
         }
     }
@@ -249,7 +272,7 @@ struct NotchPanelView: View {
             .clipped()
             .background(
                 NotchPanelShape(
-                    topExtension: shouldShowExpanded ? 14 : (isNotchShell ? 0 : 3),
+                    topExtension: shouldShowExpanded ? 14 : (isNotchShell || isIdleAtRest ? 0 : 3),
                     bottomRadius: shouldShowExpanded ? 24 : 12,
                     minHeight: notchHeight
                 )
@@ -261,13 +284,14 @@ struct NotchPanelView: View {
                 // reminders count as "reading this card" — whatever the
                 // hover then does to the surface below.
                 appState.followUps.pointerOverIsland = hovering
-                // Idle indicator hover — delay un-hover to prevent oscillation when
-                // the animated width change crosses the mouse position (#52).
+                // Idle indicator: opened from the top edge (below), like the
+                // bar. Delay un-hover to prevent oscillation when the animated
+                // width change crosses the mouse position (#52); coming back
+                // in before then keeps it open.
                 if showIdleIndicator {
                     if hovering {
                         hoverTimer?.invalidate()
                         hoverTimer = nil
-                        withAnimation(NotchAnimation.micro) { idleHovered = true }
                     } else {
                         hoverTimer?.invalidate()
                         hoverTimer = Timer.scheduledTimer(withTimeInterval: 0.3, repeats: false) { _ in
@@ -582,6 +606,25 @@ struct QuitConfirmButton: View {
 
 // MARK: - Idle Indicator Bar
 
+/// The hovered idle bar's right side: the "0" count and the three header
+/// buttons, or — while Quit is armed — the two buttons and the pill.
+enum IdleIndicatorLayout {
+    static let countFontSize: CGFloat = 13
+    static let countSpacing: CGFloat = 8
+    static let buttonSpacing: CGFloat = 4
+    static let trailingPadding: CGFloat = 6
+
+    /// Wide enough for either state, so arming Quit doesn't resize the bar.
+    static func hoveredWidth(quitText: String) -> CGFloat {
+        let font = NSFont.monospacedSystemFont(ofSize: countFontSize, weight: .bold)
+        let count = ("0" as NSString).size(withAttributes: [.font: font]).width.rounded(.up)
+        let soundAndSettings = 2 * NotchIconButton.hitSize + 2 * buttonSpacing
+        let unarmed = count + countSpacing + NotchIconButton.hitSize
+        let armed = QuitConfirmButton.pillWidth(for: quitText)
+        return soundAndSettings + Swift.max(unarmed, armed) + trailingPadding
+    }
+}
+
 private struct IdleIndicatorBar: View {
     let notchW: CGFloat
     let notchHeight: CGFloat
@@ -598,16 +641,16 @@ private struct IdleIndicatorBar: View {
 
             // Right: expanded shows text + buttons, collapsed shows nothing
             if hovered {
-                HStack(spacing: 8) {
-                    // Gives way to the quit pill: the hovered bar is only a
-                    // little wider than its buttons.
+                HStack(spacing: IdleIndicatorLayout.countSpacing) {
+                    // Gives way to the quit pill: the hovered bar is only as
+                    // wide as the wider of the two (IdleIndicatorLayout).
                     if !quit.isArmed {
                         Text("0")
-                            .font(.system(size: 13, weight: .bold, design: .monospaced))
+                            .font(.system(size: IdleIndicatorLayout.countFontSize, weight: .bold, design: .monospaced))
                             .foregroundStyle(.white.opacity(0.5))
                     }
 
-                    HStack(spacing: 4) {
+                    HStack(spacing: IdleIndicatorLayout.buttonSpacing) {
                         NotchIconButton(icon: soundEnabled ? "speaker.wave.2" : "speaker.slash", tooltip: soundEnabled ? l10n["mute"] : l10n["enable_sound_tooltip"]) {
                             soundEnabled.toggle()
                         }
@@ -617,7 +660,8 @@ private struct IdleIndicatorBar: View {
                         QuitConfirmButton(confirmation: quit)
                     }
                 }
-                .padding(.trailing, 6)
+                .padding(.trailing, IdleIndicatorLayout.trailingPadding)
+                .fixedSize()
                 .transition(.opacity)
             }
         }
@@ -1228,14 +1272,8 @@ private struct SessionCard: View {
         let live = liveRow
         if !session.recentMessages.isEmpty || live != nil {
             VStack(alignment: .leading, spacing: 3) {
-                // Chat messages (detailed mode only)
-                let visibleMessages = session.status != .idle
-                    ? Array(session.recentMessages.suffix(2))
-                    : session.recentMessages
+                let visibleMessages = SessionCardMessages.visible(session.recentMessages)
                 let fullReplyId = CompletionReplyMetrics.fullReplyId(in: visibleMessages, isCompletionCard: isCompletion)
-                let olderReplyLimit = isCompletion
-                    ? CompletionReplyMetrics.olderReplyLineLimit(aiLineLimit)
-                    : aiLineLimit
                 ForEach(visibleMessages) { msg in
                     // Extracted to separate view so SwiftUI skips re-rendering
                     // when only the parent's hover state changes (#52 perf).
@@ -1243,7 +1281,7 @@ private struct SessionCard: View {
                         text: msg.text,
                         isUser: msg.isUser,
                         fontSize: fontSize,
-                        aiLineLimit: olderReplyLimit,
+                        aiLineLimit: aiLineLimit,
                         isCompletionReply: msg.id == fullReplyId,
                         pinsHeight: isCompletion
                     )
@@ -1496,6 +1534,20 @@ private struct SessionCard: View {
 }
 
 // MARK: - Session card parts
+
+/// The exchange a card shows: your last prompt and the newest reply to it.
+/// Replies before that prompt answered something no longer on the card, and
+/// the agent's in-between notes are superseded by its latest one.
+enum SessionCardMessages {
+    static func visible(_ messages: [ChatMessage]) -> [ChatMessage] {
+        guard let promptIndex = messages.lastIndex(where: \.isUser) else {
+            return messages.last.map { [$0] } ?? []
+        }
+        let prompt = messages[promptIndex]
+        guard let reply = messages[(promptIndex + 1)...].last else { return [prompt] }
+        return [prompt, reply]
+    }
+}
 
 /// The card's status word: NEEDS YOU, WORKING, DONE … in its status colour.
 /// Also drawn by the Appearance settings preview.

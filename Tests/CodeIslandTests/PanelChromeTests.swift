@@ -131,17 +131,25 @@ final class PanelChromeTests: XCTestCase {
         // Expanded header, narrowest panel, 185pt notch: the right wing holds
         // two 24pt buttons, the pill, 4pt gaps and 6pt trailing padding.
         let headerRoom = (580 - 185) / 2 - 6 - 2 * NotchIconButton.hitSize - 2 * 4 - 4
-        // The hovered idle bar (no sessions) is only a wing plus 40pt wider
-        // than the notch on each side: mascot + 102 for its right side.
-        let idleRoom = (26 + 102) - 6 - 2 * NotchIconButton.hitSize - 2 * 4
         for (lang, table) in L10n.strings {
             let text = table["quit_confirm"] ?? ""
             XCTAssertFalse(text.isEmpty, "\(lang) has no quit_confirm")
             let width = QuitConfirmButton.pillWidth(for: text)
             XCTAssertLessThanOrEqual(width, headerRoom, "\(lang) \"\(text)\" crowds the header")
+            // The hovered idle bar (no sessions) sizes itself to the pill too.
+            let idleRoom = IdleIndicatorLayout.hoveredWidth(quitText: text)
+                - IdleIndicatorLayout.trailingPadding - 2 * NotchIconButton.hitSize - 2 * IdleIndicatorLayout.buttonSpacing
             XCTAssertLessThanOrEqual(width, idleRoom, "\(lang) \"\(text)\" runs past the idle bar")
             XCTAssertFalse((table["quit_confirm_hint"] ?? "").isEmpty, "\(lang) has no quit_confirm_hint")
         }
+    }
+
+    func testHoveredIdleBarFitsAllThreeButtons() {
+        // Count, its gap, three buttons, their gaps, trailing padding: the
+        // sound button was clipped when the wing was a fixed 40pt wider.
+        let minimum = 8 + IdleIndicatorLayout.countSpacing + 3 * NotchIconButton.hitSize
+            + 2 * IdleIndicatorLayout.buttonSpacing + IdleIndicatorLayout.trailingPadding
+        XCTAssertGreaterThanOrEqual(IdleIndicatorLayout.hoveredWidth(quitText: "QUIT?"), minimum)
     }
 
     func testHeaderHitTargetsFitTheMenuBar() {

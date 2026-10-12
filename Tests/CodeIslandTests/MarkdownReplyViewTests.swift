@@ -158,11 +158,21 @@ final class MarkdownReplyViewTests: XCTestCase {
         XCTAssertEqual(space.chrome, next, "a later window measures again")
     }
 
-    func testOlderRepliesOnTheCompletionCardTakeOneOrTwoLines() {
-        XCTAssertEqual(CompletionReplyMetrics.olderReplyLineLimit(1), 1)
-        XCTAssertEqual(CompletionReplyMetrics.olderReplyLineLimit(2), 2)
-        XCTAssertEqual(CompletionReplyMetrics.olderReplyLineLimit(5), 2)
-        XCTAssertEqual(CompletionReplyMetrics.olderReplyLineLimit(nil), 2, "unlimited setting")
+    func testCardShowsTheLastPromptAndItsNewestReply() {
+        let older = ChatMessage(isUser: false, text: "old reply")
+        let prompt = ChatMessage(isUser: true, text: "fix it")
+        let note = ChatMessage(isUser: false, text: "looking")
+        let reply = ChatMessage(isUser: false, text: "done")
+
+        XCTAssertEqual(SessionCardMessages.visible([older, prompt, reply]).map(\.id), [prompt.id, reply.id],
+                       "the reply before the prompt answered something else")
+        XCTAssertEqual(SessionCardMessages.visible([prompt, note, reply]).map(\.id), [prompt.id, reply.id],
+                       "the latest reply supersedes the agent's earlier notes")
+        XCTAssertEqual(SessionCardMessages.visible([older, prompt]).map(\.id), [prompt.id],
+                       "a prompt still being answered stands alone")
+        XCTAssertEqual(SessionCardMessages.visible([older, reply]).map(\.id), [reply.id],
+                       "no prompt left in the window: the newest reply")
+        XCTAssertTrue(SessionCardMessages.visible([]).isEmpty)
     }
 
     func testPanelHeightMatchesTheSessionListBudget() {

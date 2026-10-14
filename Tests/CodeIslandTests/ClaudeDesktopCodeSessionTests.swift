@@ -87,6 +87,50 @@ final class ClaudeDesktopCodeSessionTests: XCTestCase {
         XCTAssertNil(restored.first?.claudeDesktopSessionId)
     }
 
+    // MARK: - Reopening a past session
+
+    func testReopeningAPastSessionIsNotActivity() throws {
+        let resume = try makeEvent(["source": "resume", "_claude_desktop_session": hostId])
+        XCTAssertTrue(ClaudeDesktopCodeSession.isReopenedWithoutActivity(resume))
+        let fromEnv = try makeEvent(["source": "resume", "_env": [ClaudeDesktopCodeSession.hostSessionEnvKey: hostId]])
+        XCTAssertTrue(ClaudeDesktopCodeSession.isReopenedWithoutActivity(fromEnv))
+
+        // A new Code-tab session, /clear and compaction start as before.
+        for source in ["startup", "clear", "compact"] {
+            let event = try makeEvent(["source": source, "_claude_desktop_session": hostId])
+            XCTAssertFalse(ClaudeDesktopCodeSession.isReopenedWithoutActivity(event), source)
+        }
+        // A terminal `claude --resume` has no host id.
+        XCTAssertFalse(ClaudeDesktopCodeSession.isReopenedWithoutActivity(try makeEvent(["source": "resume"])))
+        let prompt = try makeEvent([
+            "hook_event_name": "UserPromptSubmit", "source": "resume", "_claude_desktop_session": hostId,
+        ])
+        XCTAssertFalse(ClaudeDesktopCodeSession.isReopenedWithoutActivity(prompt))
+    }
+
+    @MainActor
+    func testReopenedSessionGetsItsCardWithTheFirstPrompt() throws {
+        let state = AppState()
+        state.handleEvent(try makeEvent(["source": "resume", "_claude_desktop_session": hostId]))
+        XCTAssertNil(state.sessions["s"], "opening a past session sends nothing")
+
+        state.handleEvent(try makeEvent([
+            "hook_event_name": "UserPromptSubmit", "prompt": "go", "_claude_desktop_session": hostId,
+        ]))
+        XCTAssertEqual(state.sessions["s"]?.claudeDesktopSessionId, hostId)
+        XCTAssertEqual(state.sessions["s"]?.lastUserPrompt, "go")
+    }
+
+    @MainActor
+    func testResumingASessionThatHasACardStillRebuildsIt() throws {
+        let state = AppState()
+        state.handleEvent(try makeEvent([
+            "hook_event_name": "UserPromptSubmit", "prompt": "go", "_claude_desktop_session": hostId,
+        ]))
+        state.handleEvent(try makeEvent(["source": "resume", "_claude_desktop_session": hostId]))
+        XCTAssertNotNil(state.sessions["s"])
+    }
+
     private func makeEvent(_ extra: [String: Any]) throws -> HookEvent {
         var payload: [String: Any] = ["hook_event_name": "SessionStart", "session_id": "s"]
         for (key, value) in extra { payload[key] = value }

@@ -31,4 +31,20 @@ public enum ClaudeDesktopCodeSession {
         guard isValidHostSessionId(hostSessionId) else { return nil }
         return URL(string: "claude://code/continue?session=\(hostSessionId)")
     }
+
+    /// Whether this hook is Claude Desktop reopening a past Code-tab session:
+    /// clicking one in its sidebar starts that session's CLI with `--resume`,
+    /// which fires SessionStart (`source: "resume"`) before anything is sent.
+    /// Opening a session to read it is not activity, so it must not mint a
+    /// card; the first prompt does. A terminal `claude --resume` carries no
+    /// host id and still shows up at once.
+    public static func isReopenedWithoutActivity(_ event: HookEvent) -> Bool {
+        guard EventNormalizer.normalize(event.eventName) == "SessionStart",
+              (event.rawJSON["source"] as? String)?.lowercased() == "resume" else { return false }
+        let env = event.rawJSON["_env"] as? [String: String]
+        guard let host = event.rawJSON["_claude_desktop_session"] as? String ?? env?[hostSessionEnvKey] else {
+            return false
+        }
+        return isValidHostSessionId(host)
+    }
 }

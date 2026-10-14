@@ -1,5 +1,13 @@
 import Foundation
 
+/// A running Codex process that session discovery maps rollouts to.
+public enum CodexProcessRole: Equatable, Sendable {
+    /// Codex Desktop's shared app-server: every Desktop thread, any cwd.
+    case desktopHost
+    /// A process that owns the rollouts started in its own cwd.
+    case session
+}
+
 public enum CLIProcessResolver {
     /// Lowercased bundle markers of the Trae CN desktop IDE (bundle id
     /// `cn.trae.app`). It has shipped as `Trae CN.app` since its first macOS
@@ -227,6 +235,78 @@ public enum CLIProcessResolver {
         }
 
         return immediateParentPID
+    }
+
+    /// `_term_bundle` for a Codex hook that reached the bridge without one.
+    /// ChatGPT starts Codex Desktop's app-server
+    /// (`ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex`)
+    /// without `__CFBundleIdentifier`, so its hooks were keyed as a CLI
+    /// thread next to the `codexapp:` card discovery makes for the same thread.
+    ///
+    /// The binary cannot tell: it also runs Codex CLI from a terminal (ChatGPT's
+    /// `codex-cli/bin/codex` launcher) and the app-server Claude Code's Codex
+    /// plugin starts (#368), and its own outermost `.app` is ChatGPT.app every
+    /// time. So the nearest Codex process must run the `app-server` subcommand,
+    /// and its direct parent must be the app itself; `exec codex` in ChatGPT's
+    /// own terminal also leaves ChatGPT as the parent.
+    public static func codexDesktopTermBundle(ancestry: [ProcessAncestor]) -> String? {
+        guard let codexIndex = ancestry.firstIndex(where: {
+            sourceMatchesExecutablePath($0.executablePath ?? "", source: "codex")
+        }), isCodexAppServerInvocation(ancestry[codexIndex].arguments),
+              codexIndex + 1 < ancestry.count,
+              ancestry[codexIndex + 1].bundleIdentifier == "com.openai.codex" else {
+            return nil
+        }
+        return "com.openai.codex"
+    }
+
+    /// Desktop runs `codex [-c key=value]… app-server …`. Anything else ahead
+    /// of `app-server` (`exec`, `--`, another option) means it is a prompt or
+    /// an option value, not the subcommand. argv[0] must be `codex` too: an
+    /// empty one is dropped by ProcArgsParser and shifts the rest left.
+    static func isCodexAppServerInvocation(_ arguments: [String]) -> Bool {
+        codexSubcommand(arguments) == "app-server"
+    }
+
+    /// The first word after `codex [-c key=value]…`, or nil when argv[0] is
+    /// not `codex` or that word is an option. A bare prompt reads as one too,
+    /// so callers only compare it against known subcommand names.
+    static func codexSubcommand(_ arguments: [String]) -> String? {
+        guard let program = arguments.first, (program as NSString).lastPathComponent == "codex" else {
+            return nil
+        }
+        var index = 1
+        while index < arguments.count, arguments[index] == "-c" || arguments[index] == "--config" {
+            index += 2
+        }
+        guard index < arguments.count, !arguments[index].hasPrefix("-") else { return nil }
+        return arguments[index]
+    }
+
+    /// Subcommands that never write a rollout. ChatGPT keeps `exec-server`
+    /// (cloud environments) running next to Desktop's app-server, from its
+    /// Resources directory.
+    static let codexNonSessionSubcommands: Set<String> = [
+        "exec-server", "login", "logout", "completion", "sandbox", "debug",
+        "apply", "cloud", "features", "mcp", "responses-api-proxy", "stdio-to-uds",
+    ]
+
+    /// What a process running ChatGPT's bundled Codex binary is to session
+    /// discovery, from its argv and its parent (`ancestry[0]` is the Codex
+    /// process). The same file runs Desktop's app-server, which hosts every
+    /// Desktop thread; ChatGPT's helpers, which host none and must not claim
+    /// rollouts by cwd; and everything else (a terminal TUI, `exec`, the
+    /// app-server Claude Code's Codex plugin starts), which owns its own.
+    public static func codexBundledProcessRole(ancestry: [ProcessAncestor]) -> CodexProcessRole? {
+        guard let process = ancestry.first else { return nil }
+        if codexDesktopTermBundle(ancestry: ancestry) != nil {
+            return .desktopHost
+        }
+        if let subcommand = codexSubcommand(process.arguments),
+           codexNonSessionSubcommands.contains(subcommand) {
+            return nil
+        }
+        return .session
     }
 
     /// Walk the process ancestry and return the first known CLI source whose binary

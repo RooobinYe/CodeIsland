@@ -100,6 +100,69 @@ final class AppStateCodexAppServerTests: XCTestCase {
         XCTAssertEqual(appState.sessions[sessionId]?.providerSessionId, rawId)
     }
 
+    func testAutoReviewThreadStartedNeverBecomesACard() throws {
+        let appState = AppState()
+        let started = try XCTUnwrap(CodexAppServerClient.parseMessage(Data(
+            """
+            {"jsonrpc":"2.0","method":"thread/started","params":{"thread":{"id":"guardian-thread","cwd":"/repo","source":{"subAgent":{"other":"guardian"}},"threadSource":"guardian_review","name":"Guardian review","status":{"type":"active","activeFlags":[]}}}}
+            """.utf8
+        )))
+        appState.handleCodexAppServerMessage(started)
+
+        XCTAssertTrue(appState.sessions.isEmpty)
+    }
+
+    func testAutoReviewTranscriptIsDroppedFromHooksAndDiscovery() throws {
+        let base = FileManager.default.temporaryDirectory
+            .appendingPathComponent("codeisland-codex-autoreview-\(UUID().uuidString)")
+        let day = base.appendingPathComponent("sessions/2026/10/13")
+        try FileManager.default.createDirectory(at: day, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: base) }
+        let root = day.appendingPathComponent(
+            "rollout-2026-10-13T16-13-34-01a13450-6302-7861-8a36-fe626a5eee31.jsonl"
+        )
+        try """
+        {"type":"session_meta","payload":{"id":"01a13450-6302-7861-8a36-fe626a5eee31","cwd":"/repo","originator":"codex_cli_rs","source":"cli"}}
+        {"type":"event_msg","payload":{"type":"task_started"}}
+
+        """.write(to: root, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes(
+            [.modificationDate: Date().addingTimeInterval(-5)],
+            ofItemAtPath: root.path
+        )
+        let guardian = day.appendingPathComponent(
+            "rollout-2026-10-13T16-19-21-01a13458-41cd-7bc0-8f42-33272cf6a4e9.jsonl"
+        )
+        try """
+        {"type":"session_meta","payload":{"id":"01a13458-41cd-7bc0-8f42-33272cf6a4e9","parent_thread_id":"parent-thread","cwd":"/repo","originator":"codex_cli_rs","source":{"subagent":{"other":"guardian"}},"thread_source":"guardian_review"}}
+        {"type":"event_msg","payload":{"type":"task_started"}}
+
+        """.write(to: guardian, atomically: true, encoding: .utf8)
+
+        XCTAssertTrue(AppState.isCodexAutoReviewTranscript(path: guardian.path))
+
+        let payload: [String: Any] = [
+            "hook_event_name": "UserPromptSubmit",
+            "session_id": "01a13458-41cd-7bc0-8f42-33272cf6a4e9",
+            "_source": "codex",
+            "cwd": "/repo",
+            "transcript_path": guardian.path,
+        ]
+        let routed = HookServer(appState: AppState())
+            .routeSubsessionPayloadIfNeededForTesting(data: try JSONSerialization.data(withJSONObject: payload))
+        XCTAssertEqual(routed.responseData.map { String(decoding: $0, as: UTF8.self) }, "{}")
+
+        let discovered = AppState.discoverCodexSessions(
+            processes: [CodexProcessDiscoveryCandidate(
+                pid: 4242, cwd: "/repo", startTime: nil, isDesktop: false
+            )],
+            sessionsBase: base.appendingPathComponent("sessions").path,
+            statePath: base.appendingPathComponent("state_5.sqlite").path
+        )
+        // The newer guardian rollout must not steal the process's cwd match.
+        XCTAssertEqual(discovered.map(\.sessionId), ["01a13450-6302-7861-8a36-fe626a5eee31"])
+    }
+
     func testCodexCLIHookKeepsRawSessionId() throws {
         let payload: [String: Any] = [
             "hook_event_name": "SessionStart",

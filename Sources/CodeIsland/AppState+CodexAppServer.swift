@@ -233,6 +233,13 @@ extension AppState {
         guard let thread = params["thread"]?.asObject else { return }
         guard let threadId = thread["id"]?.asString else { return }
         let sessionId = AppState.codexAppSessionPrefix + threadId
+        let subagentSource = thread["source"]?.asObject?["subAgent"]?.asObject
+        if AppState.isCodexAutoReviewThread(
+            threadSource: thread["threadSource"]?.asString,
+            subagentOther: subagentSource?["other"]?.asString
+        ) {
+            return
+        }
         closedCodexAppThreads.removeValue(forKey: threadId)
 
         var snapshot = sessions[sessionId] ?? SessionSnapshot(startTime: Date())

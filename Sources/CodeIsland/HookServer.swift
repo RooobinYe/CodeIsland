@@ -531,6 +531,13 @@ class HookServer {
             return (data, nil)
         }
 
+        // Codex auto-review threads are dropped in every mode, never routed.
+        if SessionSnapshot.normalizedSupportedSource(raw["_source"] as? String) == "codex",
+           let path = Self.nonEmptyString(raw["transcript_path"]),
+           AppState.isCodexAutoReviewTranscript(path: path) {
+            return (data, Data("{}".utf8))
+        }
+
         // Cursor Task/subagent: apply Agent Sub-Sessions (separate / merge / hide).
         switch CursorSubsessionRouter.decide(raw: raw, mode: mode) {
         case .leave:

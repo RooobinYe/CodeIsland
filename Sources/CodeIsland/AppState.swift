@@ -2202,6 +2202,11 @@ final class AppState {
                 termBundleId: p.termBundleId
             )
             guard sessions[restoredSessionId] == nil else { continue }
+            if source == "codex",
+               let path = p.transcriptPath,
+               Self.isCodexAutoReviewTranscript(path: path) {
+                continue
+            }
             var snapshot = SessionSnapshot(startTime: p.startTime)
             snapshot.cwd = p.cwd
             snapshot.source = source
@@ -6025,7 +6030,8 @@ final class AppState {
                 guard let sessionId = sqliteColumnString(statement, index: 0),
                       let transcriptPath = sqliteColumnString(statement, index: 1),
                       let cwd = sqliteColumnString(statement, index: 2),
-                      fileManager.fileExists(atPath: transcriptPath) else { continue }
+                      fileManager.fileExists(atPath: transcriptPath),
+                      !isCodexAutoReviewTranscript(path: transcriptPath) else { continue }
                 // JSON `source` rows can also belong to a concurrent Codex CLI
                 // subagent. Never re-key an explicitly CLI-origin rollout into
                 // the Desktop namespace merely because the Desktop host is open.
@@ -6143,6 +6149,7 @@ final class AppState {
             // may own several sessions, so inspect all fresh rollouts instead.
             let candidates = fm.fileExists(atPath: sessionsBase)
                 ? findRecentCodexSessions(base: sessionsBase, after: process.startTime, fm: fm)
+                    .filter { !isCodexAutoReviewTranscript(path: $0) }
                 : []
             let files: [String]
             if useTranscriptCwd {
@@ -6337,6 +6344,41 @@ final class AppState {
             agentType: agentType,
             agentNickname: nickname
         ))
+    }
+
+    /// Codex auto-review ("guardian") runs as a hidden subagent thread that
+    /// judges the user's thread's approvals. It is Codex plumbing, not a
+    /// session, so it never gets a card — merged, hidden or separate.
+    nonisolated static func isCodexAutoReviewThread(
+        threadSource: String?,
+        subagentOther: String?
+    ) -> Bool {
+        threadSource == "guardian_review" || subagentOther == "guardian"
+    }
+
+    private nonisolated static let autoReviewTranscriptCache = OSAllocatedUnfairLock(
+        initialState: [String: Bool]()
+    )
+
+    /// `session_meta` never changes once written, so a path is inspected once.
+    nonisolated static func isCodexAutoReviewTranscript(path: String) -> Bool {
+        if let cached = autoReviewTranscriptCache.withLock({ $0[path] }) {
+            return cached
+        }
+        guard let firstLine = readFirstLine(path: path),
+              let data = firstLine.data(using: .utf8),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              json["type"] as? String == "session_meta",
+              let payload = json["payload"] as? [String: Any] else {
+            return false
+        }
+        let subagent = (payload["source"] as? [String: Any])?["subagent"] as? [String: Any]
+        let result = isCodexAutoReviewThread(
+            threadSource: payload["thread_source"] as? String,
+            subagentOther: subagent?["other"] as? String
+        )
+        autoReviewTranscriptCache.withLock { $0[path] = result }
+        return result
     }
 
     nonisolated static func codexSubagentMetadata(inTranscriptPath path: String) -> CodexSubagentMetadata? {

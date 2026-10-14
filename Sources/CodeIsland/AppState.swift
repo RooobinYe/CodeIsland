@@ -1463,6 +1463,13 @@ final class AppState {
             return
         }
 
+        // Clicking a past session in Claude Desktop resumes its CLI, and that
+        // alone is not activity: the card appears with the first prompt.
+        if sessions[sessionId] == nil,
+           ClaudeDesktopCodeSession.isReopenedWithoutActivity(event) {
+            return
+        }
+
         if sessions[sessionId] == nil {
             sessions[sessionId] = SessionSnapshot()
         }

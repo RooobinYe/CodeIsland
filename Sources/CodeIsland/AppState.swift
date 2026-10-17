@@ -6120,7 +6120,10 @@ final class AppState {
 
                 let dbUpdatedAt = Date(timeIntervalSince1970: sqlite3_column_double(statement, 3))
                 let fileModifiedAt = (try? fileManager.attributesOfItem(atPath: transcriptPath))?[.modificationDate] as? Date
-                let modifiedAt = max(dbUpdatedAt, fileModifiedAt ?? dbUpdatedAt)
+                // Opening a past thread bumps both times without a new turn;
+                // date it by its last real activity instead.
+                let modifiedAt = CodexRolloutReopen.lastActivityBeforeReopen(path: transcriptPath)
+                    ?? max(dbUpdatedAt, fileModifiedAt ?? dbUpdatedAt)
                 guard modifiedAt >= now.addingTimeInterval(-freshnessWindow) else { continue }
 
                 let dbModel = sqliteColumnString(statement, index: 4)
@@ -6261,7 +6264,12 @@ final class AppState {
                     continue
                 }
 
-                let modifiedAt = (try? fm.attributesOfItem(atPath: file))?[.modificationDate] as? Date ?? now
+                let fileModifiedAt = (try? fm.attributesOfItem(atPath: file))?[.modificationDate] as? Date ?? now
+                // Codex Desktop touches a past thread's rollout when it is only
+                // opened; that is not activity.
+                let modifiedAt = process.isDesktop
+                    ? CodexRolloutReopen.lastActivityBeforeReopen(path: file) ?? fileModifiedAt
+                    : fileModifiedAt
                 let codexFreshnessLimit: TimeInterval = process.startTime != nil ? -300 : -30
                 if modifiedAt.timeIntervalSince(now) < codexFreshnessLimit { continue }
 

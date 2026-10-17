@@ -313,61 +313,6 @@ final class AppStateCodexTranscriptTests: XCTestCase {
         XCTAssertEqual(records.first?.status, .processing)
     }
 
-    func testCodexDesktopStateScanSkipsPastThreadThatWasOnlyOpened() throws {
-        let fm = FileManager.default
-        let tempDir = fm.temporaryDirectory
-            .appendingPathComponent("codeisland-codex-db-reopened-\(UUID().uuidString)")
-        try fm.createDirectory(at: tempDir, withIntermediateDirectories: true)
-        defer { try? fm.removeItem(at: tempDir) }
-
-        // Opening a past thread appends `thread_settings_applied` and bumps
-        // `updated_at` and the rollout's mtime, with no new turn.
-        let now = Date()
-        let formatter = ISO8601DateFormatter()
-        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        let lastTurn = formatter.string(from: now.addingTimeInterval(-86_400))
-        let opened = formatter.string(from: now)
-        let reopened = tempDir.appendingPathComponent("reopened-thread.jsonl")
-        try ([
-            #"{"timestamp":"\#(lastTurn)","type":"event_msg","payload":{"type":"task_complete"}}"#,
-            #"{"timestamp":"\#(opened)","type":"event_msg","payload":{"type":"thread_settings_applied"}}"#,
-        ].joined(separator: "\n") + "\n").write(to: reopened, atomically: true, encoding: .utf8)
-        let resumed = tempDir.appendingPathComponent("resumed-thread.jsonl")
-        try ([
-            #"{"timestamp":"\#(lastTurn)","type":"event_msg","payload":{"type":"task_complete"}}"#,
-            #"{"timestamp":"\#(opened)","type":"event_msg","payload":{"type":"thread_settings_applied"}}"#,
-            #"{"timestamp":"\#(opened)","type":"event_msg","payload":{"type":"task_started"}}"#,
-        ].joined(separator: "\n") + "\n").write(to: resumed, atomically: true, encoding: .utf8)
-
-        let statePath = tempDir.appendingPathComponent("state_5.sqlite").path
-        var db: OpaquePointer?
-        XCTAssertEqual(sqlite3_open(statePath, &db), SQLITE_OK)
-        defer { sqlite3_close_v2(db) }
-        let current = Int64(now.timeIntervalSince1970)
-        let sql = """
-            CREATE TABLE threads (
-                id TEXT PRIMARY KEY,
-                rollout_path TEXT NOT NULL,
-                cwd TEXT NOT NULL,
-                updated_at INTEGER NOT NULL,
-                model TEXT,
-                archived INTEGER NOT NULL,
-                source TEXT NOT NULL
-            );
-            INSERT INTO threads VALUES ('reopened-thread', '\(reopened.path)', '/old/repo', \(current), 'gpt-test', 0, 'vscode');
-            INSERT INTO threads VALUES ('resumed-thread', '\(resumed.path)', '/old/repo', \(current), 'gpt-test', 0, 'vscode');
-            """
-        XCTAssertEqual(sqlite3_exec(db, sql, nil, nil, nil), SQLITE_OK)
-
-        let records = AppState.recentCodexDesktopThreadRecords(
-            statePath: statePath,
-            now: now,
-            fileManager: fm
-        )
-        XCTAssertEqual(records.map(\.sessionId), ["resumed-thread"])
-        XCTAssertEqual(records.first?.status, .processing)
-    }
-
     func testCodexDesktopStateScanRejectsCorruptNullAndMissingTranscriptRows() throws {
         let fm = FileManager.default
         let tempDir = fm.temporaryDirectory

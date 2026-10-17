@@ -2734,6 +2734,10 @@ final class AppState {
                 continue
             }
 
+            if Self.isIdleCodexDesktopDiscovery(source: info.source, termBundleId: info.termBundleId, status: info.status) {
+                continue
+            }
+
             var session = SessionSnapshot(startTime: info.modifiedAt)
             session.cwd = info.cwd
             session.model = info.model
@@ -2781,6 +2785,20 @@ final class AppState {
             scheduleSave()
         }
         refreshDerivedState()
+    }
+
+    /// A Codex Desktop thread's card comes from its hooks: SessionStart and
+    /// UserPromptSubmit arrive with the first prompt. Polling the state DB and
+    /// rollouts only adds a card for a turn under way (one begun before
+    /// CodeIsland launched, or a missed hook). Opening a past thread rewrites
+    /// its rollout and `updated_at` without a turn, so an idle thread found
+    /// that way is not activity.
+    nonisolated static func isIdleCodexDesktopDiscovery(
+        source: String,
+        termBundleId: String?,
+        status: AgentStatus?
+    ) -> Bool {
+        source == "codex" && termBundleId == codexAppBundleId && status != .processing
     }
 
     private func shouldSuppressClosedCodexDesktopDiscovery(_ info: DiscoveredSession) -> Bool {
@@ -6120,10 +6138,7 @@ final class AppState {
 
                 let dbUpdatedAt = Date(timeIntervalSince1970: sqlite3_column_double(statement, 3))
                 let fileModifiedAt = (try? fileManager.attributesOfItem(atPath: transcriptPath))?[.modificationDate] as? Date
-                // Opening a past thread bumps both times without a new turn;
-                // date it by its last real activity instead.
-                let modifiedAt = CodexRolloutReopen.lastActivityBeforeReopen(path: transcriptPath)
-                    ?? max(dbUpdatedAt, fileModifiedAt ?? dbUpdatedAt)
+                let modifiedAt = max(dbUpdatedAt, fileModifiedAt ?? dbUpdatedAt)
                 guard modifiedAt >= now.addingTimeInterval(-freshnessWindow) else { continue }
 
                 let dbModel = sqliteColumnString(statement, index: 4)
@@ -6264,12 +6279,7 @@ final class AppState {
                     continue
                 }
 
-                let fileModifiedAt = (try? fm.attributesOfItem(atPath: file))?[.modificationDate] as? Date ?? now
-                // Codex Desktop touches a past thread's rollout when it is only
-                // opened; that is not activity.
-                let modifiedAt = process.isDesktop
-                    ? CodexRolloutReopen.lastActivityBeforeReopen(path: file) ?? fileModifiedAt
-                    : fileModifiedAt
+                let modifiedAt = (try? fm.attributesOfItem(atPath: file))?[.modificationDate] as? Date ?? now
                 let codexFreshnessLimit: TimeInterval = process.startTime != nil ? -300 : -30
                 if modifiedAt.timeIntervalSince(now) < codexFreshnessLimit { continue }
 

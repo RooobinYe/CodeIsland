@@ -168,6 +168,55 @@ final class AppStateCodexSubsessionTests: XCTestCase {
         XCTAssertEqual(appState.sessions[identity.sessionId]?.termBundleId, AppState.codexAppBundleId)
     }
 
+    func testPastDesktopThreadThatWasOnlyOpenedGetsNoCardUntilATurnStarts() {
+        // Opening a past thread in Codex Desktop rewrites its rollout and
+        // state-DB row without starting a turn; discovery sees it idle.
+        let appState = AppState()
+        let identity = AppState.codexDiscoveryIdentity(rawSessionId: "past-thread", isDesktop: true)
+        func discovered(_ status: AgentStatus?) -> AppState.DiscoveredSession {
+            AppState.DiscoveredSession(
+                sessionId: identity.sessionId,
+                cwd: "/old/repo",
+                tty: nil,
+                model: "gpt-test",
+                pid: nil,
+                modifiedAt: Date(),
+                recentMessages: [],
+                source: "codex",
+                status: status,
+                termBundleId: identity.termBundleId,
+                providerSessionId: identity.providerSessionId
+            )
+        }
+
+        appState.integrateDiscovered([discovered(.idle)])
+        appState.integrateDiscovered([discovered(nil)])
+        XCTAssertNil(appState.sessions[identity.sessionId])
+
+        appState.integrateDiscovered([discovered(.processing)])
+        XCTAssertEqual(appState.sessions[identity.sessionId]?.status, .processing)
+
+        // Once the card exists, an idle poll still settles it.
+        appState.integrateDiscovered([discovered(.idle)])
+        XCTAssertEqual(appState.sessions[identity.sessionId]?.status, .idle)
+    }
+
+    func testIdleCodexCLIDiscoveryStillMintsACard() {
+        let appState = AppState()
+        appState.integrateDiscovered([AppState.DiscoveredSession(
+            sessionId: "cli-thread",
+            cwd: "/repo",
+            tty: nil,
+            model: nil,
+            pid: nil,
+            modifiedAt: Date(),
+            recentMessages: [],
+            source: "codex",
+            status: .idle
+        )])
+        XCTAssertNotNil(appState.sessions["cli-thread"])
+    }
+
     func testDesktopAndCLIWithSameCwdRemainSeparateCards() {
         let appState = AppState()
         let rawId = "desktop-thread"

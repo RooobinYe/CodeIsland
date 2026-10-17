@@ -2734,6 +2734,10 @@ final class AppState {
                 continue
             }
 
+            if Self.isIdleCodexDesktopDiscovery(source: info.source, termBundleId: info.termBundleId, status: info.status) {
+                continue
+            }
+
             var session = SessionSnapshot(startTime: info.modifiedAt)
             session.cwd = info.cwd
             session.model = info.model
@@ -2781,6 +2785,20 @@ final class AppState {
             scheduleSave()
         }
         refreshDerivedState()
+    }
+
+    /// A Codex Desktop thread's card comes from its hooks: SessionStart and
+    /// UserPromptSubmit arrive with the first prompt. Polling the state DB and
+    /// rollouts only adds a card for a turn under way (one begun before
+    /// CodeIsland launched, or a missed hook). Opening a past thread rewrites
+    /// its rollout and `updated_at` without a turn, so an idle thread found
+    /// that way is not activity.
+    nonisolated static func isIdleCodexDesktopDiscovery(
+        source: String,
+        termBundleId: String?,
+        status: AgentStatus?
+    ) -> Bool {
+        source == "codex" && termBundleId == codexAppBundleId && status != .processing
     }
 
     private func shouldSuppressClosedCodexDesktopDiscovery(_ info: DiscoveredSession) -> Bool {

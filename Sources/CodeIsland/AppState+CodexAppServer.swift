@@ -123,9 +123,8 @@ extension AppState {
             watcherActive: codexAppServerObservers != nil
         ) {
         case .reconnectPreservingSessions:
-            // Preserve state-backed cards, refresh immediately, and restore the
-            // live JSON-RPC channel with capped exponential backoff.
-            requestCodexDesktopDiscoveryScan()
+            // Preserve the cards and restore the live JSON-RPC channel with
+            // capped exponential backoff.
             scheduleCodexAppServerReconnect()
         case .stopAndRemoveSessions:
             codexAppServerReconnectTask?.cancel()

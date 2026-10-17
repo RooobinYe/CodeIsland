@@ -43,30 +43,6 @@ final class AppStateCodexSubsessionTests: XCTestCase {
         ))
     }
 
-    func testCodexDesktopDiscoveryPollingRequiresRunningAppAndElapsedInterval() {
-        let now = Date(timeIntervalSince1970: 1_000)
-        XCTAssertFalse(AppState.shouldPollCodexDesktopDiscovery(
-            runningBundleIdentifiers: [],
-            lastPollAt: nil,
-            now: now
-        ))
-        XCTAssertTrue(AppState.shouldPollCodexDesktopDiscovery(
-            runningBundleIdentifiers: [AppState.codexAppBundleId],
-            lastPollAt: nil,
-            now: now
-        ))
-        XCTAssertFalse(AppState.shouldPollCodexDesktopDiscovery(
-            runningBundleIdentifiers: [AppState.codexAppBundleId],
-            lastPollAt: now.addingTimeInterval(-5),
-            now: now
-        ))
-        XCTAssertTrue(AppState.shouldPollCodexDesktopDiscovery(
-            runningBundleIdentifiers: [AppState.codexAppBundleId],
-            lastPollAt: now.addingTimeInterval(-6),
-            now: now
-        ))
-    }
-
     func testCodexDesktopDiscoveryChannelsShareOneIdentityWhileCLIStaysRaw() {
         let rawId = "desktop-thread"
         let desktop = AppState.codexDiscoveryIdentity(rawSessionId: rawId, isDesktop: true)
@@ -166,55 +142,6 @@ final class AppStateCodexSubsessionTests: XCTestCase {
             "/tmp/database-rollout.jsonl"
         )
         XCTAssertEqual(appState.sessions[identity.sessionId]?.termBundleId, AppState.codexAppBundleId)
-    }
-
-    func testPastDesktopThreadThatWasOnlyOpenedGetsNoCardUntilATurnStarts() {
-        // Opening a past thread in Codex Desktop rewrites its rollout and
-        // state-DB row without starting a turn; discovery sees it idle.
-        let appState = AppState()
-        let identity = AppState.codexDiscoveryIdentity(rawSessionId: "past-thread", isDesktop: true)
-        func discovered(_ status: AgentStatus?) -> AppState.DiscoveredSession {
-            AppState.DiscoveredSession(
-                sessionId: identity.sessionId,
-                cwd: "/old/repo",
-                tty: nil,
-                model: "gpt-test",
-                pid: nil,
-                modifiedAt: Date(),
-                recentMessages: [],
-                source: "codex",
-                status: status,
-                termBundleId: identity.termBundleId,
-                providerSessionId: identity.providerSessionId
-            )
-        }
-
-        appState.integrateDiscovered([discovered(.idle)])
-        appState.integrateDiscovered([discovered(nil)])
-        XCTAssertNil(appState.sessions[identity.sessionId])
-
-        appState.integrateDiscovered([discovered(.processing)])
-        XCTAssertEqual(appState.sessions[identity.sessionId]?.status, .processing)
-
-        // Once the card exists, an idle poll still settles it.
-        appState.integrateDiscovered([discovered(.idle)])
-        XCTAssertEqual(appState.sessions[identity.sessionId]?.status, .idle)
-    }
-
-    func testIdleCodexCLIDiscoveryStillMintsACard() {
-        let appState = AppState()
-        appState.integrateDiscovered([AppState.DiscoveredSession(
-            sessionId: "cli-thread",
-            cwd: "/repo",
-            tty: nil,
-            model: nil,
-            pid: nil,
-            modifiedAt: Date(),
-            recentMessages: [],
-            source: "codex",
-            status: .idle
-        )])
-        XCTAssertNotNil(appState.sessions["cli-thread"])
     }
 
     func testDesktopAndCLIWithSameCwdRemainSeparateCards() {

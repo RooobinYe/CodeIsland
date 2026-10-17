@@ -74,24 +74,6 @@ enum CodexTranscriptOrigin: Equatable, Sendable {
     case unknown
 }
 
-/// A Codex Desktop thread recovered from Codex's local state database.
-///
-/// Recent Codex Desktop builds run their app-server with `/` as the process CWD,
-/// so the CLI discovery path cannot map that process back to a project. Keeping
-/// this small value type separate lets discovery hydrate native-app sessions from
-/// the authoritative state DB without exposing the private `DiscoveredSession`.
-struct CodexDesktopThreadRecord: Sendable {
-    let sessionId: String
-    let cwd: String
-    let model: String?
-    let modifiedAt: Date
-    let recentMessages: [ChatMessage]
-    let transcriptPath: String
-    let status: AgentStatus
-    let subagentMetadata: CodexSubagentMetadata?
-    let subagentStatus: String?
-}
-
 @MainActor
 @Observable
 final class AppState {
@@ -347,9 +329,6 @@ final class AppState {
     @ObservationIgnored
     nonisolated(unsafe) private var discoveryScanTask: Task<Void, Never>?
     private var pendingDiscoveryRescan = false
-    @ObservationIgnored
-    nonisolated(unsafe) private var codexDesktopDiscoveryScanTask: Task<Void, Never>?
-    private var lastCodexDesktopDiscoveryPollAt: Date?
     private var isShowingCompletion: Bool {
         if case .completionCard = surface { return true }
         return false
@@ -569,21 +548,6 @@ final class AppState {
                 removeSession(key)
             }
         }
-        let discoveryPollNow = Date()
-        // Check the cheap clock predicate before the expensive app list: the poll
-        // is rate-limited to every 6s, so five of every six ticks can skip it.
-        let codexPollIntervalElapsed = lastCodexDesktopDiscoveryPollAt.map {
-            discoveryPollNow.timeIntervalSince($0) >= 6
-        } ?? true
-        if codexPollIntervalElapsed, Self.shouldPollCodexDesktopDiscovery(
-            runningBundleIdentifiers: runningBundleIds(),
-            lastPollAt: lastCodexDesktopDiscoveryPollAt,
-            now: discoveryPollNow
-        ) {
-            lastCodexDesktopDiscoveryPollAt = discoveryPollNow
-            requestCodexDesktopDiscoveryScan()
-        }
-
         // 4. Remove idle sessions past timeout (user setting, or 10 min default for no-monitor sessions)
         let userTimeout = SettingsManager.shared.sessionTimeout
         for (key, session) in sessions where session.status == .idle {
@@ -2431,40 +2395,6 @@ final class AppState {
         }
     }
 
-    /// FSEvents is not guaranteed to report every append below
-    /// `~/.codex/sessions` on all macOS/filesystem combinations. Reuse the
-    /// cleanup tick as a low-frequency fallback, but only while Codex Desktop
-    /// is running and only after the polling interval has elapsed.
-    nonisolated static func shouldPollCodexDesktopDiscovery(
-        runningBundleIdentifiers: Set<String>,
-        lastPollAt: Date?,
-        now: Date,
-        interval: TimeInterval = 6
-    ) -> Bool {
-        guard runningBundleIdentifiers.contains(codexAppBundleId) else { return false }
-        guard let lastPollAt else { return true }
-        return now.timeIntervalSince(lastPollAt) >= interval
-    }
-
-    func requestCodexDesktopDiscoveryScan() {
-        guard codexDesktopDiscoveryScanTask == nil else { return }
-        codexDesktopDiscoveryScanTask = Task.detached { [weak self] in
-            let discovered = ConfigInstaller.isEnabled(source: "codex")
-                ? Self.findRecentCodexDesktopSessions()
-                : []
-            guard !Task.isCancelled else { return }
-            await MainActor.run { [weak self] in
-                guard let self else { return }
-                guard !Task.isCancelled else {
-                    self.codexDesktopDiscoveryScanTask = nil
-                    return
-                }
-                self.integrateDiscovered(discovered)
-                self.codexDesktopDiscoveryScanTask = nil
-            }
-        }
-    }
-
     func startSessionDiscovery() {
         startCleanupTimer()
         // Restore persisted sessions before process scan (deduped by scan)
@@ -2734,10 +2664,6 @@ final class AppState {
                 continue
             }
 
-            if Self.isIdleCodexDesktopDiscovery(source: info.source, termBundleId: info.termBundleId, status: info.status) {
-                continue
-            }
-
             var session = SessionSnapshot(startTime: info.modifiedAt)
             session.cwd = info.cwd
             session.model = info.model
@@ -2785,20 +2711,6 @@ final class AppState {
             scheduleSave()
         }
         refreshDerivedState()
-    }
-
-    /// A Codex Desktop thread's card comes from its hooks: SessionStart and
-    /// UserPromptSubmit arrive with the first prompt. Polling the state DB and
-    /// rollouts only adds a card for a turn under way (one begun before
-    /// CodeIsland launched, or a missed hook). Opening a past thread rewrites
-    /// its rollout and `updated_at` without a turn, so an idle thread found
-    /// that way is not activity.
-    nonisolated static func isIdleCodexDesktopDiscovery(
-        source: String,
-        termBundleId: String?,
-        status: AgentStatus?
-    ) -> Bool {
-        source == "codex" && termBundleId == codexAppBundleId && status != .processing
     }
 
     private func shouldSuppressClosedCodexDesktopDiscovery(_ info: DiscoveredSession) -> Bool {
@@ -3653,9 +3565,6 @@ final class AppState {
         discoveryScanTask?.cancel()
         discoveryScanTask = nil
         pendingDiscoveryRescan = false
-        codexDesktopDiscoveryScanTask?.cancel()
-        codexDesktopDiscoveryScanTask = nil
-        lastCodexDesktopDiscoveryPollAt = nil
         for key in Array(processMonitors.keys) { stopMonitor(key) }
     }
 
@@ -3696,7 +3605,6 @@ final class AppState {
         // + main-synced Timer/FSEvents teardown keep discovery crash-free.
         tearDownMainThreadResources()
         discoveryScanTask?.cancel()
-        codexDesktopDiscoveryScanTask?.cancel()
         codexAppServerReconnectTask?.cancel()
         for (_, monitor) in processMonitors {
             monitor.source.cancel()
@@ -6050,123 +5958,6 @@ final class AppState {
         return JSONLTailer.latestTurnStatus(in: newlineTerminated)
     }
 
-    /// Load recently touched Codex Desktop threads from Codex's own state DB.
-    /// Desktop app-server processes use `/` as CWD in current releases, making
-    /// the process-to-project matcher insufficient on its own.
-    nonisolated static func recentCodexDesktopThreadRecords(
-        statePath overrideStatePath: String? = nil,
-        now: Date = Date(),
-        freshnessWindow: TimeInterval = 600,
-        completionSettleWindow: TimeInterval = 30,
-        fileManager: FileManager = .default
-    ) -> [CodexDesktopThreadRecord] {
-        let statePath = overrideStatePath ?? FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent(".codex/state_5.sqlite").path
-        // `has_user_event` is not a reliable visibility bit for Desktop threads:
-        // current ChatGPT/Codex builds may keep it at 0 while a user turn is
-        // actively writing to the rollout. Pull a slightly wider DB candidate
-        // window, then enforce the tighter freshness window from DB/file mtimes.
-        let candidateWindow = max(freshnessWindow, 60 * 60)
-        let cutoff = now.addingTimeInterval(-candidateWindow).timeIntervalSince1970
-
-        return withSQLiteDatabase(at: statePath) { db in
-            let columns = sqliteTableColumns(db: db, tableName: "threads")
-            let requiredColumns: Set<String> = [
-                "id", "rollout_path", "cwd", "archived", "source",
-            ]
-            guard requiredColumns.isSubset(of: columns) else { return [] }
-
-            let updatedAtExpression: String
-            if columns.contains("updated_at_ms"), columns.contains("updated_at") {
-                updatedAtExpression = "COALESCE(NULLIF(updated_at_ms, 0) / 1000.0, updated_at)"
-            } else if columns.contains("updated_at_ms") {
-                updatedAtExpression = "updated_at_ms / 1000.0"
-            } else if columns.contains("updated_at") {
-                updatedAtExpression = "updated_at"
-            } else {
-                return []
-            }
-            let modelExpression = columns.contains("model") ? "model" : "NULL"
-            let spawnColumns = sqliteTableColumns(db: db, tableName: "thread_spawn_edges")
-            let hasSpawnStatus = Set(["child_thread_id", "status"]).isSubset(of: spawnColumns)
-            let spawnJoin = hasSpawnStatus
-                ? "LEFT JOIN thread_spawn_edges edge ON edge.child_thread_id = thread.id"
-                : ""
-            let spawnStatusExpression = hasSpawnStatus ? "edge.status" : "NULL"
-
-            guard let statement = prepareSQLiteStatement(
-                db: db,
-                sql: """
-                    SELECT thread.id, thread.rollout_path, thread.cwd,
-                           \(updatedAtExpression), \(modelExpression),
-                           \(spawnStatusExpression), thread.source
-                    FROM threads AS thread
-                    \(spawnJoin)
-                    WHERE thread.archived = 0
-                      AND \(updatedAtExpression) >= ?
-                      AND (
-                        thread.source = 'vscode'
-                        OR thread.source = 'appServer'
-                        OR thread.source LIKE '{"subagent"%'
-                      )
-                      ORDER BY \(updatedAtExpression) DESC
-                      LIMIT 50;
-                    """
-            ) else { return [] }
-            defer { sqlite3_finalize(statement) }
-            sqlite3_bind_double(statement, 1, cutoff)
-
-            var records: [CodexDesktopThreadRecord] = []
-            while sqlite3_step(statement) == SQLITE_ROW {
-                guard let sessionId = sqliteColumnString(statement, index: 0),
-                      let transcriptPath = sqliteColumnString(statement, index: 1),
-                      let cwd = sqliteColumnString(statement, index: 2),
-                      fileManager.fileExists(atPath: transcriptPath),
-                      !isCodexAutoReviewTranscript(path: transcriptPath) else { continue }
-                // JSON `source` rows can also belong to a concurrent Codex CLI
-                // subagent. Never re-key an explicitly CLI-origin rollout into
-                // the Desktop namespace merely because the Desktop host is open.
-                let transcriptOrigin = codexTranscriptOrigin(path: transcriptPath)
-                let databaseSource = sqliteColumnString(statement, index: 6) ?? ""
-                if databaseSource.hasPrefix("{\"subagent") {
-                    // JSON source alone does not identify the owning surface.
-                    // Require positive Desktop provenance before namespacing it.
-                    guard transcriptOrigin == .desktop else { continue }
-                } else {
-                    guard transcriptOrigin != .cli else { continue }
-                }
-
-                let dbUpdatedAt = Date(timeIntervalSince1970: sqlite3_column_double(statement, 3))
-                let fileModifiedAt = (try? fileManager.attributesOfItem(atPath: transcriptPath))?[.modificationDate] as? Date
-                let modifiedAt = max(dbUpdatedAt, fileModifiedAt ?? dbUpdatedAt)
-                guard modifiedAt >= now.addingTimeInterval(-freshnessWindow) else { continue }
-
-                let dbModel = sqliteColumnString(statement, index: 4)
-                let (transcriptModel, messages) = readRecentFromCodexTranscript(path: transcriptPath)
-                let turnStatus = latestCodexTurnStatus(path: transcriptPath)
-                let isFresh = now.timeIntervalSince(modifiedAt) <= 300
-                let isActive = isFresh && turnStatus == .processing
-                if !isActive,
-                   now.timeIntervalSince(modifiedAt) > completionSettleWindow {
-                    continue
-                }
-
-                records.append(CodexDesktopThreadRecord(
-                    sessionId: sessionId,
-                    cwd: cwd,
-                    model: dbModel ?? transcriptModel,
-                    modifiedAt: modifiedAt,
-                    recentMessages: messages,
-                    transcriptPath: transcriptPath,
-                    status: isActive ? .processing : .idle,
-                    subagentMetadata: codexSubagentMetadata(inTranscriptPath: transcriptPath),
-                    subagentStatus: sqliteColumnString(statement, index: 5)
-                ))
-            }
-            return records
-        } ?? []
-    }
-
     /// Find active Codex sessions by matching running processes to session files
     private nonisolated static func findActiveCodexSessions(candidatePids: [pid_t]? = nil) -> [DiscoveredSession] {
         let codexProcesses = findCodexProcesses(candidatePids: candidatePids)
@@ -6217,16 +6008,12 @@ final class AppState {
     ) -> [DiscoveredSession] {
         var results: [DiscoveredSession] = []
         var seenDiscoveryIds: Set<String> = []
-        var seenDesktopSessionIds: Set<String> = []
         var claimedUnknownSessionIds: Set<String> = []
 
-        // Prefer the native host for unknown-origin root rollouts. Explicit CLI
-        // and Desktop metadata is filtered below, so concurrent modes remain
-        // distinct even when they share a project directory.
-        let orderedProcesses = processes.sorted {
-            $0.isDesktop && !$1.isDesktop
-        }
-        for process in orderedProcesses {
+        // Codex Desktop threads get their cards from hooks, which arrive with
+        // the first prompt. Its rollouts and state-DB rows also change when a
+        // past thread is only opened, so they are never read as activity.
+        for process in processes where !process.isDesktop {
             let processCwd = process.cwd
             let useTranscriptCwd = codexDiscoveryUsesTranscriptCwd(processCwd: processCwd)
             if !useTranscriptCwd,
@@ -6315,9 +6102,6 @@ final class AppState {
                 if transcriptOrigin == .unknown {
                     claimedUnknownSessionIds.insert(rawSessionId)
                 }
-                if process.isDesktop {
-                    seenDesktopSessionIds.insert(rawSessionId)
-                }
             }
         }
 
@@ -6339,55 +6123,7 @@ final class AppState {
             }
         }
 
-        // Native Codex Desktop / ChatGPT sessions cannot be mapped by process
-        // CWD because its app-server runs from `/`. Hydrate recent threads from
-        // state_5.sqlite and let transcript activity drive running/idle state.
-        if processes.contains(where: { $0.isDesktop }) {
-            results.append(contentsOf: findRecentCodexDesktopSessions(
-                excluding: seenDesktopSessionIds,
-                statePath: statePath,
-                now: now,
-                fileManager: fm
-            ))
-        }
         return results
-    }
-
-    private nonisolated static func findRecentCodexDesktopSessions(
-        excluding excludedSessionIds: Set<String> = [],
-        statePath: String? = nil,
-        now: Date = Date(),
-        fileManager: FileManager = .default
-    ) -> [DiscoveredSession] {
-        let resolvedStatePath = statePath ?? FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent(".codex/state_5.sqlite").path
-
-        return recentCodexDesktopThreadRecords(
-            statePath: resolvedStatePath,
-            now: now,
-            fileManager: fileManager
-        ).compactMap { record in
-            guard !excludedSessionIds.contains(record.sessionId) else { return nil }
-            let identity = codexDiscoveryIdentity(rawSessionId: record.sessionId, isDesktop: true)
-            return DiscoveredSession(
-                sessionId: identity.sessionId,
-                cwd: record.cwd,
-                tty: nil,
-                model: record.model,
-                pid: nil,
-                modifiedAt: record.modifiedAt,
-                recentMessages: record.recentMessages,
-                source: "codex",
-                transcriptPath: record.transcriptPath,
-                parentSessionId: record.subagentMetadata?.parentThreadId,
-                subagentStatus: record.subagentStatus,
-                agentType: record.subagentMetadata?.agentType,
-                agentNickname: record.subagentMetadata?.agentNickname,
-                status: record.status,
-                termBundleId: identity.termBundleId,
-                providerSessionId: identity.providerSessionId
-            )
-        }
     }
 
     private nonisolated static func inspectCodexSubagentMetadata(

@@ -1434,6 +1434,14 @@ final class AppState {
             return
         }
 
+        // Nor is the CLI tidying up a session that sat idle long enough for
+        // its card to be swept: an automatic compaction would bring it back
+        // "thinking", for good.
+        if sessions[sessionId] == nil,
+           BackgroundCompaction.isHousekeepingWithoutCard(event) {
+            return
+        }
+
         if sessions[sessionId] == nil {
             sessions[sessionId] = SessionSnapshot()
         }

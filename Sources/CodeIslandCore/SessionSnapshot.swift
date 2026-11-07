@@ -1543,12 +1543,22 @@ public func reduceEvent(
             }
         }
     case "PreCompact":
+        // An automatic compaction while the session is idle is not a turn:
+        // no Stop will follow to settle it (see BackgroundCompaction).
+        if sessions[sessionId]?.status == .idle,
+           BackgroundCompaction.isAutomaticCompaction(event) {
+            break
+        }
         sessions[sessionId]?.status = .processing
         if sessions[sessionId]?.source == "codex" {
             sessions[sessionId]?.currentTool = "Compacting"
         }
         sessions[sessionId]?.toolDescription = "Compacting context\u{2026}"
     case "PostCompact":
+        if sessions[sessionId]?.status == .idle,
+           BackgroundCompaction.isAutomaticCompaction(event) {
+            break
+        }
         if !isWaiting {
             sessions[sessionId]?.status = .processing
             sessions[sessionId]?.currentTool = nil

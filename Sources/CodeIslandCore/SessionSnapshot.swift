@@ -750,6 +750,16 @@ public struct SessionSnapshot: Sendable {
         return source == expectedSource
     }
 
+    /// True when a silent "thinking" spell this native app session sits in
+    /// should be settled to idle after a short wait: these apps write their
+    /// transcripts as they go, so silence means the turn is over. Claude Code
+    /// Desktop is the exception: it fires the CLI's Stop hook, and the model
+    /// can think for minutes without writing a line, so a short wait would
+    /// call a turn done that is still running.
+    public var settlesSilentThinkingQuickly: Bool {
+        isNativeAppMode && source != "claude"
+    }
+
     /// True when the session runs inside an IDE's integrated terminal.
     /// We can't query IDE tab/pane state, so notification suppression should be skipped.
     public var isIDETerminal: Bool {

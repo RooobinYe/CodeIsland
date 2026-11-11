@@ -20,6 +20,17 @@ final class ClaudeDesktopSupportTests: XCTestCase {
         XCTAssertFalse(session.isIDETerminal)
     }
 
+    func testDesktopClaudeSessionKeepsThinkingThroughSilence() {
+        // The model can think for minutes without a hook or transcript line;
+        // only Stop ends a Desktop turn, so the 30s native-app settle is off.
+        let desktop = makeSession(termBundleId: "com.anthropic.claudefordesktop", source: "claude")
+        XCTAssertFalse(desktop.settlesSilentThinkingQuickly)
+        let codexApp = makeSession(termBundleId: "com.openai.codex", source: "codex")
+        XCTAssertTrue(codexApp.settlesSilentThinkingQuickly)
+        let terminal = makeSession(termBundleId: "com.googlecode.iterm2", source: "claude")
+        XCTAssertFalse(terminal.settlesSilentThinkingQuickly)
+    }
+
     func testTerminalClaudeSessionIsNotNativeAppMode() {
         let session = makeSession(termBundleId: "com.googlecode.iterm2", source: "claude")
         XCTAssertFalse(session.isNativeAppMode)

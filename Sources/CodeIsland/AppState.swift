@@ -498,7 +498,8 @@ final class AppState {
             }
             // Native apps write transcripts synchronously — if the transcript check above
             // didn't find a stop marker after 30s, the session is almost certainly idle.
-            if session.isNativeAppMode, elapsed > nativeAppThinkingTimeout {
+            // Not Claude Desktop: it ends turns with Stop and can think silently for minutes.
+            if session.settlesSilentThinkingQuickly, elapsed > nativeAppThinkingTimeout {
                 sessions[key]?.status = .idle
                 continue
             }
